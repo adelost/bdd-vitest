@@ -1,6 +1,6 @@
 {
   "name": "bdd-vitest",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "type": "module",
   "description": "Enforced Given/When/Then for Vitest. ~200 lines. Zero config.",
   "license": "MIT",
