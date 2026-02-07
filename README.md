@@ -9,7 +9,7 @@ Most test frameworks let you write `it("does something", () => {})` with no stru
 bdd-vitest forces structure:
 
 ```ts
-scenario("rejects when queue is full", {
+unit("rejects when queue is full", {
   given: ["a queue at max capacity", () => createQueue({ max: 50, filled: 50 })],
   when:  ["enqueueing another request", (q) => q.enqueue(mockReq()).catch(e => e)],
   then:  ["returns queue-full error", (err) => expect(err.message).toContain("full")],
@@ -27,16 +27,18 @@ npm install -D bdd-vitest
 ## That's it
 
 ```ts
-import { feature, scenario, expect } from "bdd-vitest";
+import { unit, component, feature, expect } from "bdd-vitest";
 
 feature("Checkout", () => {
-  scenario("applies discount over 500kr", {
+  unit("applies discount over 500kr", {
     given: ["a cart with total 600kr",  () => createCart(600)],
     when:  ["checking out",             (cart) => checkout(cart)],
     then:  ["10% discount applied",     (res) => expect(res.discount).toBe(60)],
   });
 });
 ```
+
+You must pick a level: `unit`, `component`, `integration`, or `e2e`. No generic `scenario` — choosing a level is the point.
 
 TypeScript infers the full chain: `given` return → `when` input → `then` input. Autocomplete works.
 
@@ -57,13 +59,13 @@ given: [() => login()]
 `then` is required. Everything else is optional:
 
 ```ts
-scenario("full",       { given, when, then });  // setup → action → assert
-scenario("no action",  { given, then });         // setup → assert
-scenario("no setup",   { when, then });          // action → assert
-scenario("assertion",  { then });                // just assert
+unit("full",       { given, when, then });  // setup → action → assert
+unit("no action",  { given, then });         // setup → assert
+unit("no setup",   { when, then });          // action → assert
+unit("assertion",  { then });                // just assert
 
 // No setup code? given can be just a description:
-scenario("health check", {
+component("health check", {
   given: "a running server",
   when:  ["requesting /health", () => app.request("/health")],
   then:  ["returns 200",       (res) => expect(res.status).toBe(200)],
@@ -75,7 +77,7 @@ scenario("health check", {
 `when` receives `given`'s return. `then` receives both:
 
 ```ts
-scenario("FIFO order", {
+unit("FIFO order", {
   given: ["a queue with tracker", () => ({ order: [] as number[] })],
   when:  ["processing tasks",    async (ctx) => {
     await enqueueAll([1, 2, 3], (n) => { ctx.order.push(n); return n; });
@@ -90,7 +92,7 @@ scenario("FIFO order", {
 ## Table-driven
 
 ```ts
-scenarioOutline("adds numbers correctly", [
+unit.outline("adds numbers correctly", [
   { name: "positives",  a: 2,  b: 3, expected: 5 },
   { name: "negatives",  a: -1, b: 1, expected: 0 },
   { name: "zeros",      a: 0,  b: 0, expected: 0 },
@@ -104,7 +106,7 @@ scenarioOutline("adds numbers correctly", [
 ## Cleanup
 
 ```ts
-scenarioWithCleanup("reads temp file", {
+component("reads temp file", {
   given:   ["a temp file", () => createTempFile("data")],
   when:    ["reading it",  (f) => readFile(f)],
   then:    ["has content", (c) => expect(c).toBe("data")],
@@ -125,10 +127,10 @@ AssertionError: [then] expected 42 to be 43
 ```ts
 feature("Auth", () => {
   rule("valid credentials", () => {
-    scenario("grants access", { ... });
+    unit("grants access", { ... });
   });
   rule("expired tokens", () => {
-    scenario("refreshes automatically", { ... });
+    component("refreshes automatically", { ... });
   });
 });
 ```
@@ -142,7 +144,7 @@ No dependencies. Real HTTP server on a random port:
 ```ts
 import { mockServer } from "bdd-vitest/mock-server";
 
-scenario("retries on 503", {
+component("retries on 503", {
   given: ["an unreliable API", mockServer({
     "POST /v1/completions": [
       { status: 503, body: { error: "overloaded" } },
@@ -174,7 +176,7 @@ Same idea, but patches global `fetch` instead of starting a server:
 ```ts
 import { mockFetch } from "bdd-vitest/mock-fetch";
 
-scenario("handles 404", {
+component("handles 404", {
   given: ["github returns 404", mockFetch({
     "GET https://api.github.com/users/x": 404,
   })],
@@ -230,6 +232,7 @@ integration("checkout with payment", {
 | `unit` | 50ms | 100ms | Pure logic, no I/O |
 | `component` | 2s | 5s | Service in isolation, mocked deps |
 | `integration` | 15s | 30s | Multiple services, real deps |
+| `e2e` | 60s | 120s | Full system, browser, network |
 
 Know it's slow? Suppress the warning:
 
@@ -249,24 +252,15 @@ unit.group("discount rules", () => {
 });
 ```
 
-Custom levels:
-
-```ts
-import { createLevel } from "bdd-vitest/levels";
-const e2e = createLevel({ name: "e2e", timeout: 60_000 });
-```
+Four levels. No escape hatch. If it doesn't fit, it doesn't belong in CI.
 
 ## API
 
 | Export | What |
 |--------|------|
-| `scenario(name, { given, when, then })` | Single test with BDD phases |
-| `scenario.skip` / `scenario.only` | Standard vitest modifiers |
-| `scenarioOutline(name, table, phases)` | Table-driven tests |
-| `scenarioWithCleanup(name, { ..., cleanup })` | Auto-cleanup after assertion |
+| `unit` / `component` / `integration` / `e2e` | Test with enforced level + timeout |
+| `.skip` / `.only` / `.group` | Modifiers on any level |
 | `feature(name, fn)` / `rule(name, fn)` | Grouping (describe aliases) |
-| `unit` / `component` / `integration` | Test levels with enforced timeouts |
-| `createLevel(config)` | Custom test level |
 | `mockServer(routes)` | Declarative HTTP mock server |
 | `mockFetch(routes)` | Patches global fetch |
 | `expect` | Re-exported from vitest |

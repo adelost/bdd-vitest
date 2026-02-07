@@ -18,6 +18,9 @@ import { describe, it, expect } from "vitest";
 // Re-export vitest essentials for convenience
 export { expect } from "vitest";
 
+// Re-export levels as primary API
+export { unit, component, integration, e2e } from "./levels.js";
+
 // Helper to create scenario variants (skip/only)
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function createScenarioRunner(itFn: any) {
@@ -76,6 +79,10 @@ const _scenario = createScenarioRunner(it);
 const _scenarioOnly = createScenarioRunner(it.only);
 const _scenarioSkip = createScenarioRunner(it.skip);
 
+/**
+ * @deprecated Use `unit`, `component`, `integration`, or `e2e` instead.
+ * Choosing a level is required — it enforces timeouts and communicates intent.
+ */
 export function scenario<TContext, TResult>(
   name: string,
   phases: Scenario<TContext, TResult>,

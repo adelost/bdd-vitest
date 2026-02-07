@@ -1,5 +1,5 @@
 import { expect } from "vitest";
-import { unit, component, integration, createLevel } from "../src/levels";
+import { unit, component, integration, e2e } from "../src/levels";
 
 // --- unit ---
 
@@ -72,15 +72,13 @@ vitestIt("unit rejects slow tests", async () => {
   expect(elapsed).toBeLessThan(timeout);
 });
 
-// --- custom level ---
+// --- e2e ---
 
-const smoke = createLevel({ name: "smoke", timeout: 500 });
-
-smoke.group("custom levels", () => {
-  smoke("works with custom timeout", {
-    given: ["a fast operation", () => "fast"],
-    when:  ["checking", (v) => v.length],
-    then:  ["has length", (r) => expect(r).toBe(4)],
+e2e.group("full system", () => {
+  e2e("works with long timeout", {
+    given: ["a value", () => "e2e"],
+    when:  ["checking length", (v) => v.length],
+    then:  ["has length 3", (r) => expect(r).toBe(3)],
   });
 });
 

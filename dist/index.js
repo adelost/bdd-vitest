@@ -1,3 +1,9 @@
+import {
+  component,
+  e2e,
+  integration,
+  unit
+} from "./chunk-R4KYBEVR.js";
 import "./chunk-3RG5ZIWI.js";
 
 // src/index.ts
@@ -65,10 +71,14 @@ function scenarioOutline(name, table, phases) {
   });
 }
 export {
+  component,
+  e2e,
   expect2 as expect,
   feature,
+  integration,
   rule,
   scenario,
   scenarioOutline,
-  scenarioWithCleanup
+  scenarioWithCleanup,
+  unit
 };

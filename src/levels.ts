@@ -31,9 +31,10 @@ export interface LevelConfig {
 }
 
 const LEVELS = {
-  unit:        { timeout: 100,    warnAt: 50,     name: "unit",        nextLevel: "component" },
-  component:   { timeout: 5_000,  warnAt: 2_000,  name: "component",   nextLevel: "integration" },
-  integration: { timeout: 30_000, warnAt: 15_000, name: "integration", nextLevel: "e2e" },
+  unit:        { timeout: 100,     warnAt: 50,     name: "unit",        nextLevel: "component" },
+  component:   { timeout: 5_000,   warnAt: 2_000,  name: "component",   nextLevel: "integration" },
+  integration: { timeout: 30_000,  warnAt: 15_000, name: "integration", nextLevel: "e2e" },
+  e2e:         { timeout: 120_000, warnAt: 60_000, name: "e2e" },
 } as const;
 
 // --- Level scenario ---
@@ -140,16 +141,53 @@ function createLevelGroup(level: LevelConfig) {
 
 // --- Level runner with group ---
 
+export interface TableRow {
+  name: string;
+  [key: string]: unknown;
+}
+
 export interface LevelRunner {
   <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
   skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   group: (name: string, fn: () => void) => void;
+  outline: <TRow extends TableRow, TContext, TResult>(
+    name: string,
+    table: TRow[],
+    phases: {
+      given: (row: TRow) => TContext | Promise<TContext>;
+      when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
+      then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
+    },
+  ) => void;
+}
+
+function createLevelOutline(level: LevelConfig) {
+  return function <TRow extends TableRow, TContext, TResult>(
+    name: string,
+    table: TRow[],
+    phases: {
+      given: (row: TRow) => TContext | Promise<TContext>;
+      when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
+      then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
+    },
+  ): void {
+    describe(`[${level.name}] ${name}`, () => {
+      for (const row of table) {
+        it(row.name, { timeout: level.timeout }, async () => {
+          const context = await phases.given(row);
+          const result = await phases.when(context, row);
+          await phases.then(result, context, row);
+        });
+      }
+    });
+  };
 }
 
 function buildLevel(config: LevelConfig): LevelRunner {
   const runner = createLevelRunner(config) as LevelRunner;
   runner.group = createLevelGroup(config);
+  runner.outline = createLevelOutline(config);
   return runner;
 }
 
@@ -161,15 +199,5 @@ export const unit: LevelRunner = buildLevel(LEVELS.unit);
 export const component: LevelRunner = buildLevel(LEVELS.component);
 /** Multiple services together. Real dependencies. <30s. */
 export const integration: LevelRunner = buildLevel(LEVELS.integration);
-
-// --- Custom levels ---
-
-/**
- * Create a custom test level with specific constraints.
- *
- *   const e2e = createLevel({ name: "e2e", timeout: 60_000 });
- *   e2e("full signup flow", { ... });
- */
-export function createLevel(config: LevelConfig): LevelRunner {
-  return buildLevel(config);
-}
+/** Full system, browser, network. <120s. */
+export const e2e: LevelRunner = buildLevel(LEVELS.e2e);
