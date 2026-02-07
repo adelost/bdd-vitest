@@ -186,56 +186,62 @@ feature("Auth", () => {
 ## Real world example
 
 ```ts
-import { unit, component, feature, rule, expect } from "bdd-vitest";
+import { unit, component, integration, feature, rule, expect } from "bdd-vitest";
 import { mockServer } from "bdd-vitest/mock-server";
 
-feature("Pricing", () => {
-  rule("discount calculations", () => {
-    unit("10% over 500kr", {
-      given: ["a cart at 600kr", () => createCart([{ price: 600 }])],
-      when:  ["calculating",     (cart) => calculateTotal(cart)],
-      then:  ["applies 10%",     (total) => expect(total).toBe(540)],
+feature("HAL 9000", () => {
+  rule("pod bay door access", () => {
+    unit("denies access without clearance", {
+      given: ["a crew member with no override", () => ({ crew: "Dave", clearance: 0 })],
+      when:  ["requesting pod bay doors",       (ctx) => hal.evaluateRequest(ctx)],
+      then:  ["denies the request",             (res) => {
+        expect(res.granted).toBe(false);
+        expect(res.message).toContain("I'm afraid I can't do that");
+      }],
     });
 
-    unit("no discount under 500kr", {
-      given: ["a cart at 200kr", () => createCart([{ price: 200 }])],
-      when:  ["calculating",     (cart) => calculateTotal(cart)],
-      then:  ["full price",      (total) => expect(total).toBe(200)],
-    });
-
-    unit.outline("bulk discounts", [
-      { name: "5 items: 5%",   qty: 5,  price: 100, expected: 475 },
-      { name: "10 items: 10%", qty: 10, price: 100, expected: 900 },
-      { name: "1 item: 0%",    qty: 1,  price: 100, expected: 100 },
+    unit.outline("clearance levels", [
+      { name: "tourist: denied",    clearance: 0, expected: false },
+      { name: "engineer: denied",   clearance: 1, expected: false },
+      { name: "commander: granted", clearance: 9, expected: true },
     ], {
-      given: (row) => createCart(Array(row.qty as number).fill({ price: row.price })),
-      when:  (cart) => calculateTotal(cart),
-      then:  (total, _ctx, row) => expect(total).toBe(row.expected),
+      given: (row) => ({ crew: "Dave", clearance: row.clearance as number }),
+      when:  (ctx) => hal.evaluateRequest(ctx),
+      then:  (res, _ctx, row) => expect(res.granted).toBe(row.expected),
     });
   });
 
-  rule("checkout API", () => {
-    component("processes payment", {
-      given: ["a payment API", mockServer({
-        "POST /charge": { status: 200, body: { id: "ch_123", paid: true } },
+  rule("crew monitoring API", () => {
+    component("reports life signs", {
+      given: ["a sensor API", mockServer({
+        "GET /crew/dave/vitals": { heartRate: 72, o2: 98, status: "nominal" },
       })],
-      when:    ["checking out", (server) =>
-        checkout({ amount: 540, paymentUrl: `${server.url}/charge` })],
-      then:    ["returns confirmation", (res) => {
-        expect(res.paid).toBe(true);
-        expect(res.chargeId).toBe("ch_123");
-      }],
+      when:    ["checking vitals", (server) => hal.checkCrew("dave", server.url)],
+      then:    ["reports nominal",  (report) => expect(report.status).toBe("nominal")],
       cleanup: (server) => server.close(),
     });
 
-    component("handles payment failure", {
-      given: ["a failing payment API", mockServer({
-        "POST /charge": { status: 402, body: { error: "card_declined" } },
+    component("handles sensor failure", {
+      given: ["a failing sensor API", mockServer({
+        "GET /crew/dave/vitals": 503,
       })],
-      when:    ["checking out", (server) =>
-        checkout({ amount: 540, paymentUrl: `${server.url}/charge` }).catch(e => e)],
-      then:    ["returns error", (err) => expect(err.code).toBe("card_declined")],
+      when:    ["checking vitals", (server) => hal.checkCrew("dave", server.url)],
+      then:    ["triggers alert",  (report) => expect(report.status).toBe("sensor_failure")],
       cleanup: (server) => server.close(),
+    });
+  });
+
+  rule("mission log", () => {
+    integration("logs all crew requests", {
+      given: ["a mission database", async () => {
+        const db = await createMissionDb();
+        await hal.processRequest(db, { crew: "Dave", action: "open_pod_bay" });
+        await hal.processRequest(db, { crew: "Frank", action: "check_antenna" });
+        return db;
+      }],
+      when:    ["querying the log",   (db) => db.logs.findAll()],
+      then:    ["contains both entries", (logs) => expect(logs).toHaveLength(2)],
+      cleanup: (db) => db.destroy(),
     });
   });
 });
