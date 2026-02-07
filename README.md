@@ -183,6 +183,64 @@ feature("Auth", () => {
 });
 ```
 
+## Real world example
+
+```ts
+import { unit, component, feature, rule, expect } from "bdd-vitest";
+import { mockServer } from "bdd-vitest/mock-server";
+
+feature("Pricing", () => {
+  rule("discount calculations", () => {
+    unit("10% over 500kr", {
+      given: ["a cart at 600kr", () => createCart([{ price: 600 }])],
+      when:  ["calculating",     (cart) => calculateTotal(cart)],
+      then:  ["applies 10%",     (total) => expect(total).toBe(540)],
+    });
+
+    unit("no discount under 500kr", {
+      given: ["a cart at 200kr", () => createCart([{ price: 200 }])],
+      when:  ["calculating",     (cart) => calculateTotal(cart)],
+      then:  ["full price",      (total) => expect(total).toBe(200)],
+    });
+
+    unit.outline("bulk discounts", [
+      { name: "5 items: 5%",   qty: 5,  price: 100, expected: 475 },
+      { name: "10 items: 10%", qty: 10, price: 100, expected: 900 },
+      { name: "1 item: 0%",    qty: 1,  price: 100, expected: 100 },
+    ], {
+      given: (row) => createCart(Array(row.qty as number).fill({ price: row.price })),
+      when:  (cart) => calculateTotal(cart),
+      then:  (total, _ctx, row) => expect(total).toBe(row.expected),
+    });
+  });
+
+  rule("checkout API", () => {
+    component("processes payment", {
+      given: ["a payment API", mockServer({
+        "POST /charge": { status: 200, body: { id: "ch_123", paid: true } },
+      })],
+      when:    ["checking out", (server) =>
+        checkout({ amount: 540, paymentUrl: `${server.url}/charge` })],
+      then:    ["returns confirmation", (res) => {
+        expect(res.paid).toBe(true);
+        expect(res.chargeId).toBe("ch_123");
+      }],
+      cleanup: (server) => server.close(),
+    });
+
+    component("handles payment failure", {
+      given: ["a failing payment API", mockServer({
+        "POST /charge": { status: 402, body: { error: "card_declined" } },
+      })],
+      when:    ["checking out", (server) =>
+        checkout({ amount: 540, paymentUrl: `${server.url}/charge` }).catch(e => e)],
+      then:    ["returns error", (err) => expect(err.code).toBe("card_declined")],
+      cleanup: (server) => server.close(),
+    });
+  });
+});
+```
+
 ## API
 
 | Export | What |
