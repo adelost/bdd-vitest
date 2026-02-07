@@ -14,7 +14,7 @@ feature("Checkout", () => {
 });
 ```
 
-Read just the descriptions — you understand the system without opening production code.
+Read just the descriptions  - you understand the system without opening production code.
 
 ## Why
 
@@ -23,7 +23,7 @@ Most test frameworks let you write `it("does something", () => {})` with no stru
 bdd-vitest makes it impossible:
 
 - **Descriptions are required.** Every phase is a `["description", fn]` tuple. TypeScript rejects missing descriptions at compile time.
-- **Levels are required.** No generic `scenario` — you must pick `unit`, `component`, `integration`, or `e2e`. Each has enforced timeouts.
+- **Levels are required.** No generic `scenario`  - you must pick `unit`, `component`, `integration`, or `e2e`. Each has enforced timeouts.
 - **Assertions are required.** `then` is mandatory. No test without a check.
 
 ## Install
@@ -34,7 +34,7 @@ npm install -D bdd-vitest
 
 ## Levels
 
-Every test must declare its level. Wrong level → timeout fails the test. Slow for its level → warning nudges you.
+Every test must declare its level. Wrong level => timeout fails the test. Slow for its level => warning nudges you.
 
 ```ts
 import { unit, component, integration, e2e } from "bdd-vitest";
@@ -58,9 +58,9 @@ Know it's intentionally slow? `slow: true` suppresses the warning (timeout still
 `then` is always required. Everything else is optional:
 
 ```ts
-unit("full",       { given, when, then });   // setup → action → assert
-unit("no action",  { given, then });          // setup → assert
-unit("no setup",   { when, then });           // action → assert
+unit("full",       { given, when, then });   // setup => action => assert
+unit("no action",  { given, then });          // setup => assert
+unit("no setup",   { when, then });           // action => assert
 unit("assertion",  { then });                 // just assert
 ```
 
@@ -74,7 +74,7 @@ component("health check", {
 });
 ```
 
-Context flows through — `when` receives `given`'s return, `then` receives both:
+Context flows through  - `when` receives `given`'s return, `then` receives both:
 
 ```ts
 unit("FIFO order", {
@@ -118,9 +118,9 @@ component("retries on 503", {
 Response shortcuts:
 
 ```ts
-"GET /users":      { name: "Alice" }                                       // → 200 + JSON
-"DELETE /users/1": 204                                                      // → status only
-"POST /submit":    [{ status: 503 }, { status: 200, body: { ok: true } }]  // → sequential
+"GET /users":      { name: "Alice" }                                       // => 200 + JSON
+"DELETE /users/1": 204                                                      // => status only
+"POST /submit":    [{ status: 503 }, { status: 200, body: { ok: true } }]  // => sequential
 ```
 
 ## Mock fetch
