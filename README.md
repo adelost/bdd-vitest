@@ -14,7 +14,7 @@ feature("Checkout", () => {
 });
 ```
 
-Read just the descriptions  - you understand the system without opening production code.
+Read just the descriptions - you understand the system without opening production code.
 
 ## Why
 
@@ -23,7 +23,7 @@ Most test frameworks let you write `it("does something", () => {})` with no stru
 bdd-vitest makes it impossible:
 
 - **Descriptions are required.** Every phase is a `["description", fn]` tuple. TypeScript rejects missing descriptions at compile time.
-- **Levels are required.** No generic `scenario`  - you must pick `unit`, `component`, `integration`, or `e2e`. Each has enforced timeouts.
+- **Levels are required.** No generic `scenario` - you must pick `unit`, `component`, `integration`, or `e2e`. Each has enforced timeouts.
 - **Assertions are required.** `then` is mandatory. No test without a check.
 
 ## Install
@@ -74,7 +74,7 @@ component("health check", {
 });
 ```
 
-Context flows through  - `when` receives `given`'s return, `then` receives both:
+Context flows through - `when` receives `given`'s return, `then` receives both:
 
 ```ts
 unit("FIFO order", {
