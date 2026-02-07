@@ -185,7 +185,7 @@ feature("Auth", () => {
 
 ## Browser tests (Playwright)
 
-Works with `@vitest/browser` + Playwright. No special API - `e2e` gives you 120s timeout:
+Works with `@vitest/browser` + Playwright. The `e2e` level gives you 120s timeout:
 
 ```ts
 import { e2e, feature, rule, expect } from "bdd-vitest";
