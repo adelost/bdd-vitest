@@ -40,7 +40,7 @@ async function startService(config) {
     const hasGpu = await checkGpu();
     if (!hasGpu) {
       throw new Error(
-        `[${name}] Requires GPU but none detected. Skip with: scenario.skip(...)`
+        `[${name}] Requires GPU but none detected. Skip with: integration.skip(...)`
       );
     }
   }

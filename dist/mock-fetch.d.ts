@@ -4,13 +4,14 @@
  * Usage:
  *   import { mockFetch } from "bdd-vitest/mock-fetch";
  *
- *   scenario("handles 404", {
+ *   component("handles 404", {
  *     given: ["github returns 404", mockFetch({
  *       "GET https://api.github.com/users/x": 404,
  *       "POST https://api.example.com/data": { id: 1, name: "test" },
  *     })],
  *     when: ["fetching user", () => fetch("https://api.github.com/users/x")],
  *     then: ["returns 404", (res) => expect(res.status).toBe(404)],
+ *     cleanup: (mock) => mock.restore(),
  *   });
  */
 type MockFetchResponse = {
@@ -27,7 +28,7 @@ interface MockFetchInstance {
 }
 /**
  * Creates a fetch mock tuple-compatible function.
- * Patches global fetch. Auto-restores when the scenario ends (via cleanup or manually).
+ * Patches global fetch. Restore via cleanup or manually.
  *
  * Use in given:
  *   given: ["mocked APIs", mockFetch({ "GET https://api.example.com/foo": { bar: 1 } })]

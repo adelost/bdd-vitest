@@ -4,7 +4,7 @@
  * Usage:
  *   import { mockServer } from "bdd-vitest/mock-server";
  *
- *   scenario("retries on 503", {
+ *   component("retries on 503", {
  *     given: ["an unreliable API", mockServer({
  *       "POST /v1/completions": [
  *         { status: 503, body: { error: "overloaded" } },
@@ -14,6 +14,7 @@
  *     when: ["requesting with retry", (server) =>
  *       fetchWithRetry(`${server.url}/v1/completions`)],
  *     then: ["succeeds", (res) => expect(res.ok).toBe(true)],
+ *     cleanup: (server) => server.close(),
  *   });
  */
 /** Response: object with body, just a status code, or plain JSON (implicit 200) */
