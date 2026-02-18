@@ -131,6 +131,60 @@ feature("feature() and rule()", () => {
   });
 });
 
+// === Empty description validation ===
+
+feature("empty description enforcement", () => {
+  unit("feature rejects empty name", {
+    when: ["calling feature with empty name", () => {
+      try { feature("", () => {}); return "no error"; }
+      catch (e) { return (e as Error).message; }
+    }],
+    then: ["throws with clear message", (msg) => {
+      expect(msg).toContain("feature requires a non-empty name");
+    }],
+  });
+
+  unit("rule rejects empty name", {
+    when: ["calling rule with empty name", () => {
+      try { rule("", () => {}); return "no error"; }
+      catch (e) { return (e as Error).message; }
+    }],
+    then: ["throws with clear message", (msg) => {
+      expect(msg).toContain("rule requires a non-empty name");
+    }],
+  });
+
+  unit("unit rejects empty test name", {
+    when: ["calling unit with empty name", () => {
+      try { unit("", { then: ["ok", () => {}] }); return "no error"; }
+      catch (e) { return (e as Error).message; }
+    }],
+    then: ["throws with clear message", (msg) => {
+      expect(msg).toContain("requires a non-empty description");
+    }],
+  });
+
+  unit("rejects empty then description", {
+    when: ["calling unit with empty then desc", () => {
+      try { unit("valid name", { then: ["", () => {}] }); return "no error"; }
+      catch (e) { return (e as Error).message; }
+    }],
+    then: ["throws with clear message", (msg) => {
+      expect(msg).toContain("then requires a non-empty description");
+    }],
+  });
+
+  unit("rejects whitespace-only descriptions", {
+    when: ["calling feature with spaces", () => {
+      try { feature("   ", () => {}); return "no error"; }
+      catch (e) { return (e as Error).message; }
+    }],
+    then: ["throws", (msg) => {
+      expect(msg).toContain("feature requires a non-empty name");
+    }],
+  });
+});
+
 // === Mock AI ===
 
 feature("createMockProvider()", () => {

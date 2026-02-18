@@ -19,6 +19,24 @@ import { describe, it } from "vitest";
 /** Phase: [description, function] tuple — description is enforced */
 export type Phase<TFn> = [desc: string, fn: TFn];
 
+function requireDescription(value: string, label: string): void {
+  if (!value.trim()) throw new Error(`${label} requires a non-empty description`);
+}
+
+function validatePhaseDescriptions<TContext, TResult>(
+  phases: LevelScenario<TContext, TResult>,
+): void {
+  if (Array.isArray(phases.given) && !phases.given[0].trim()) {
+    throw new Error("given requires a non-empty description");
+  }
+  if (phases.when && !phases.when[0].trim()) {
+    throw new Error("when requires a non-empty description");
+  }
+  if (!phases.then[0].trim()) {
+    throw new Error("then requires a non-empty description");
+  }
+}
+
 // --- Level config ---
 
 export interface LevelConfig {
@@ -55,6 +73,7 @@ async function executeScenario<TContext, TResult>(
   phases: LevelScenario<TContext, TResult>,
   level: LevelConfig,
 ): Promise<void> {
+  validatePhaseDescriptions(phases);
   const start = performance.now();
   let phase = "given";
   let context: TContext = undefined as TContext;
@@ -95,6 +114,8 @@ function createLevelRunner(level: LevelConfig) {
     name: string,
     phases: LevelScenario<TContext, TResult>,
   ): void {
+    requireDescription(name, level.name);
+    validatePhaseDescriptions(phases);
     it(name, { timeout: level.timeout }, () => executeScenario(name, phases, level));
   }
 
@@ -103,6 +124,7 @@ function createLevelRunner(level: LevelConfig) {
     name: string,
     _phases: LevelScenario<TContext, TResult>,
   ): void {
+    requireDescription(name, level.name);
     it.skip(name, () => {});
   };
 
@@ -110,6 +132,8 @@ function createLevelRunner(level: LevelConfig) {
     name: string,
     phases: LevelScenario<TContext, TResult>,
   ): void {
+    requireDescription(name, level.name);
+    validatePhaseDescriptions(phases);
     it.only(name, { timeout: level.timeout }, () => executeScenario(name, phases, level));
   };
 
@@ -120,6 +144,7 @@ function createLevelRunner(level: LevelConfig) {
 
 function createLevelGroup(level: LevelConfig) {
   return function group(name: string, fn: () => void): void {
+    requireDescription(name, `${level.name}.group`);
     describe(`[${level.name}] ${name}`, fn);
   };
 }
@@ -161,8 +186,10 @@ function createLevelOutline(level: LevelConfig) {
       slow?: boolean;
     },
   ): void {
+    requireDescription(name, `${level.name}.outline`);
     describe(`[${level.name}] ${name}`, () => {
       for (const row of table) {
+        requireDescription(row.name, `${level.name}.outline row`);
         it(row.name, { timeout: level.timeout }, async () => {
           const start = performance.now();
           let phase = "given";

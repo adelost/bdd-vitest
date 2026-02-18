@@ -30,6 +30,7 @@ export type { Phase } from "./levels.js";
  * Groups related scenarios. Alias for describe with intent.
  */
 export function feature(name: string, fn: () => void): void {
+  if (!name.trim()) throw new Error("feature requires a non-empty name");
   describe(name, fn);
 }
 
@@ -39,5 +40,6 @@ export function feature(name: string, fn: () => void): void {
  * Sub-groups within a feature for related business rules.
  */
 export function rule(name: string, fn: () => void): void {
+  if (!name.trim()) throw new Error("rule requires a non-empty name");
   describe(name, fn);
 }
