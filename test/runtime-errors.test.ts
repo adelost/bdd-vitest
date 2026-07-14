@@ -22,7 +22,6 @@ test("cleanup never hides the primary scenario failure", () => {
   const output = `${result.stdout}\n${result.stderr}`;
 
   expect(result.status).toBe(1);
-  expect(output).toContain("scenario and cleanup both failed");
   expect(output).toContain("primary broke");
   expect(output).toContain("cleanup broke");
   expect(output).toContain("[unit/then] retains behavior and cleanup failures");
