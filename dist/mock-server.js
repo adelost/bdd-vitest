@@ -1,5 +1,3 @@
-import "./chunk-3RG5ZIWI.js";
-
 // src/mock-server.ts
 import { createServer } from "http";
 function normalizeResponse(raw) {

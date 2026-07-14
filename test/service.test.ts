@@ -117,4 +117,56 @@ feature("assertPerformance()", () => {
       expect((error as Error).message).toContain("Startup too slow");
     }],
   });
+
+  unit("requires an explicit response measurement", {
+    given: ["a mock service", () => ({
+      name: "api",
+      pid: 1,
+      stdout: "",
+      stderr: "",
+      startupMs: 5,
+      isAlive: () => true,
+      isHealthy: async () => true,
+      stop: async () => {},
+      stats: () => ({ pid: 1, uptimeMs: 10, memoryMb: 5 }),
+    })],
+    when: ["asserting a response threshold without a measurement", (srv) => {
+      try {
+        assertPerformance(srv, { maxResponseMs: 100 });
+        return null;
+      } catch (error) {
+        return error;
+      }
+    }],
+    then: ["the missing measurement is rejected", (error) => {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("measurements.responseMs");
+    }],
+  });
+
+  unit("enforces a measured response threshold", {
+    given: ["a mock service", () => ({
+      name: "api",
+      pid: 1,
+      stdout: "",
+      stderr: "",
+      startupMs: 5,
+      isAlive: () => true,
+      isHealthy: async () => true,
+      stop: async () => {},
+      stats: () => ({ pid: 1, uptimeMs: 10, memoryMb: 5 }),
+    })],
+    when: ["asserting a slow measured response", (srv) => {
+      try {
+        assertPerformance(srv, { maxResponseMs: 100 }, { responseMs: 150 });
+        return null;
+      } catch (error) {
+        return error;
+      }
+    }],
+    then: ["the slow response is rejected", (error) => {
+      expect(error).toBeInstanceOf(Error);
+      expect((error as Error).message).toContain("Response too slow");
+    }],
+  });
 });

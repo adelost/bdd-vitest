@@ -95,10 +95,14 @@ interface PerformanceRequirement {
     /** Max response time for a single request */
     maxResponseMs?: number;
 }
+interface PerformanceMeasurements {
+    /** Measured response time, for example from measureMs(). */
+    responseMs?: number;
+}
 /**
  * Assert performance requirements on a running service.
  */
-declare function assertPerformance(service: RunningService, requirements: PerformanceRequirement): void;
+declare function assertPerformance(service: RunningService, requirements: PerformanceRequirement, measurements?: PerformanceMeasurements): void;
 /**
  * Measure response time of an async operation.
  */
@@ -107,4 +111,4 @@ declare function measureMs<T>(fn: () => Promise<T>): Promise<{
     ms: number;
 }>;
 
-export { type PerformanceRequirement, type ProcessStats, type RunningService, type ServiceCluster, type ServiceConfig, assertPerformance, autoCleanup, measureMs, startCluster, startService };
+export { type PerformanceMeasurements, type PerformanceRequirement, type ProcessStats, type RunningService, type ServiceCluster, type ServiceConfig, assertPerformance, autoCleanup, measureMs, startCluster, startService };

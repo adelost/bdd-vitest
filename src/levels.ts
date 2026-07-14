@@ -15,6 +15,7 @@
  */
 
 import { describe, it } from "vitest";
+import type { BddTestMetadata } from "./contract.js";
 
 /** Phase: [description, function] tuple — description is enforced */
 export type Phase<TFn> = [desc: string, fn: TFn];
@@ -45,9 +46,33 @@ export interface LevelConfig {
   /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
   warnAt?: number;
   /** Level name for error messages */
-  name: string;
+  name: BddTestMetadata["level"];
   /** Suggested next level (for warning message) */
   nextLevel?: string;
+}
+
+function scenarioMetadata<TContext, TResult>(
+  level: LevelConfig,
+  name: string,
+  phases: LevelScenario<TContext, TResult>,
+): BddTestMetadata {
+  return {
+    version: 1,
+    level: level.name,
+    scenario: name,
+    phases: {
+      given: typeof phases.given === "string" ? phases.given : phases.given?.[0],
+      when: phases.when?.[0],
+      then: phases.then[0],
+    },
+    documented: true,
+  };
+}
+
+function testOptions(level: LevelConfig, metadata: BddTestMetadata): { timeout: number } {
+  // `meta` is supported by Vitest's collector but is not exposed on TestOptions
+  // in every supported Vitest type version.
+  return { timeout: level.timeout, meta: { bdd: metadata } } as { timeout: number };
 }
 
 const LEVELS = {
@@ -116,16 +141,18 @@ function createLevelRunner(level: LevelConfig) {
   ): void {
     requireDescription(name, level.name);
     validatePhaseDescriptions(phases);
-    it(name, { timeout: level.timeout }, () => executeScenario(name, phases, level));
+    it(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
+      executeScenario(name, phases, level));
   }
 
   // .skip and .only variants
   run.skip = function <TContext, TResult>(
     name: string,
-    _phases: LevelScenario<TContext, TResult>,
+    phases: LevelScenario<TContext, TResult>,
   ): void {
     requireDescription(name, level.name);
-    it.skip(name, () => {});
+    validatePhaseDescriptions(phases);
+    it.skip(name, testOptions(level, scenarioMetadata(level, name, phases)), () => {});
   };
 
   run.only = function <TContext, TResult>(
@@ -134,7 +161,8 @@ function createLevelRunner(level: LevelConfig) {
   ): void {
     requireDescription(name, level.name);
     validatePhaseDescriptions(phases);
-    it.only(name, { timeout: level.timeout }, () => executeScenario(name, phases, level));
+    it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
+      executeScenario(name, phases, level));
   };
 
   return run;
@@ -156,51 +184,97 @@ export interface TableRow {
   [key: string]: unknown;
 }
 
+export interface DocumentedOutline<TContext, TResult, TRow extends TableRow> {
+  given: Phase<(row: TRow) => TContext | Promise<TContext>>;
+  when: Phase<(context: TContext, row: TRow) => TResult | Promise<TResult>>;
+  then: Phase<(result: TResult, context: TContext, row: TRow) => void | Promise<void>>;
+  cleanup?: (context: TContext) => void | Promise<void>;
+  slow?: boolean;
+}
+
+/** @deprecated Use DocumentedOutline so every phase is exported as documentation. */
+export interface LegacyOutline<TContext, TResult, TRow extends TableRow> {
+  given: (row: TRow) => TContext | Promise<TContext>;
+  when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
+  then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
+  cleanup?: (context: TContext) => void | Promise<void>;
+  slow?: boolean;
+}
+
+export interface OutlineRunner {
+  <TRow extends TableRow, TContext, TResult>(
+    name: string,
+    table: TRow[],
+    phases: DocumentedOutline<TContext, TResult, TRow>,
+  ): void;
+  /** @deprecated Add descriptions to given/when/then tuples. */
+  <TRow extends TableRow, TContext, TResult>(
+    name: string,
+    table: TRow[],
+    phases: LegacyOutline<TContext, TResult, TRow>,
+  ): void;
+}
+
 export interface LevelRunner {
   <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
   skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   group: (name: string, fn: () => void) => void;
-  outline: <TRow extends TableRow, TContext, TResult>(
-    name: string,
-    table: TRow[],
-    phases: {
-      given: (row: TRow) => TContext | Promise<TContext>;
-      when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
-      then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
-      cleanup?: (context: TContext) => void | Promise<void>;
-      slow?: boolean;
-    },
-  ) => void;
+  outline: OutlineRunner;
 }
 
 function createLevelOutline(level: LevelConfig) {
   return function <TRow extends TableRow, TContext, TResult>(
     name: string,
     table: TRow[],
-    phases: {
-      given: (row: TRow) => TContext | Promise<TContext>;
-      when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
-      then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
-      cleanup?: (context: TContext) => void | Promise<void>;
-      slow?: boolean;
-    },
+    phases: DocumentedOutline<TContext, TResult, TRow> | LegacyOutline<TContext, TResult, TRow>,
   ): void {
     requireDescription(name, `${level.name}.outline`);
+    if (table.length === 0) throw new Error(`${level.name}.outline requires at least one row`);
+    const tupleFlags = [phases.given, phases.when, phases.then].map(Array.isArray);
+    if (tupleFlags.some(Boolean) && !tupleFlags.every(Boolean)) {
+      throw new Error(`${level.name}.outline must describe all phases or use the legacy form for all phases`);
+    }
+    const documented = tupleFlags.every(Boolean);
+    const documentedPhases = phases as DocumentedOutline<TContext, TResult, TRow>;
+    const legacyPhases = phases as LegacyOutline<TContext, TResult, TRow>;
+    const given = documented ? documentedPhases.given[1] : legacyPhases.given;
+    const when = documented ? documentedPhases.when[1] : legacyPhases.when;
+    const then = documented ? documentedPhases.then[1] : legacyPhases.then;
+    const phaseDescriptions = documented
+      ? {
+          given: documentedPhases.given[0],
+          when: documentedPhases.when[0],
+          then: documentedPhases.then[0],
+        }
+      : { given: "", when: "", then: "" };
+    if (documented) {
+      requireDescription(phaseDescriptions.given, "given");
+      requireDescription(phaseDescriptions.when, "when");
+      requireDescription(phaseDescriptions.then, "then");
+    }
     describe(`[${level.name}] ${name}`, () => {
       for (const row of table) {
         requireDescription(row.name, `${level.name}.outline row`);
-        it(row.name, { timeout: level.timeout }, async () => {
+        const metadata: BddTestMetadata = {
+          version: 1,
+          level: level.name,
+          scenario: `${name} [${row.name}]`,
+          phases: phaseDescriptions,
+          documented,
+          outline: { name, row: row.name },
+        };
+        it(row.name, testOptions(level, metadata), async () => {
           const start = performance.now();
           let phase = "given";
           let context: TContext = undefined as TContext;
 
           try {
-            context = await phases.given(row);
+            context = await given(row);
             phase = "when";
-            const result = await phases.when(context, row);
+            const result = await when(context, row);
             phase = "then";
-            await phases.then(result, context, row);
+            await then(result, context, row);
           } catch (error) {
             if (error instanceof Error && !error.message.startsWith("[")) {
               error.message = `[${phase}] ${error.message}`;

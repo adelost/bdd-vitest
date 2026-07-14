@@ -80,4 +80,16 @@ feature("mockFetch", () => {
     }],
     cleanup: (mock) => mock.restore(),
   });
+
+  component("uses the method carried by a Request object", {
+    given: ["a POST-only mock", mockFetch({
+      "POST https://api.example.com/items": 201,
+    })],
+    when: ["fetching with a POST Request", () =>
+      fetch(new Request("https://api.example.com/items", { method: "POST" }))],
+    then: ["the POST route is selected", (res) => {
+      expect(res.status).toBe(201);
+    }],
+    cleanup: (mock) => mock.restore(),
+  });
 });

@@ -18,7 +18,9 @@
  *   const cluster = serviceCluster([api, redis, worker]);
  */
 
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
+import { readFileSync } from "node:fs";
+import { totalmem } from "node:os";
 import { afterAll } from "vitest";
 
 // --- Zombie protection: track ALL spawned processes ---
@@ -42,9 +44,6 @@ function killAll() {
 }
 
 process.on("exit", killAll);
-process.on("SIGINT", killAll);
-process.on("SIGTERM", killAll);
-process.on("uncaughtException", killAll);
 
 // --- Service definition (declarative) ---
 
@@ -126,11 +125,25 @@ export async function startService(
   } = config;
 
   // Check requirements before starting
-  if (requires?.gpu) {
-    const hasGpu = await checkGpu();
-    if (!hasGpu) {
+  if (requires?.minRamMb !== undefined) {
+    const availableRamMb = Math.round(totalmem() / 1024 / 1024);
+    if (availableRamMb < requires.minRamMb) {
+      throw new Error(
+        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${availableRamMb}MB`,
+      );
+    }
+  }
+
+  if (requires?.gpu || requires?.minVramMb !== undefined) {
+    const gpuMemoryMb = getGpuMemoryMb();
+    if (gpuMemoryMb === null) {
       throw new Error(
         `[${name}] Requires GPU but none detected. Skip with: integration.skip(...)`,
+      );
+    }
+    if (requires.minVramMb !== undefined && gpuMemoryMb < requires.minVramMb) {
+      throw new Error(
+        `[${name}] Requires ${requires.minVramMb}MB VRAM but largest GPU has ${gpuMemoryMb}MB`,
       );
     }
   }
@@ -267,12 +280,18 @@ export interface PerformanceRequirement {
   maxResponseMs?: number;
 }
 
+export interface PerformanceMeasurements {
+  /** Measured response time, for example from measureMs(). */
+  responseMs?: number;
+}
+
 /**
  * Assert performance requirements on a running service.
  */
 export function assertPerformance(
   service: RunningService,
   requirements: PerformanceRequirement,
+  measurements: PerformanceMeasurements = {},
 ) {
   if (requirements.maxStartupMs !== undefined) {
     if (service.startupMs > requirements.maxStartupMs) {
@@ -287,6 +306,19 @@ export function assertPerformance(
     if (stats.memoryMb !== null && stats.memoryMb > requirements.maxMemoryMb) {
       throw new Error(
         `[${service.name}] Memory too high: ${stats.memoryMb}MB > ${requirements.maxMemoryMb}MB`,
+      );
+    }
+  }
+
+  if (requirements.maxResponseMs !== undefined) {
+    if (measurements.responseMs === undefined) {
+      throw new Error(
+        `[${service.name}] maxResponseMs requires measurements.responseMs`,
+      );
+    }
+    if (measurements.responseMs > requirements.maxResponseMs) {
+      throw new Error(
+        `[${service.name}] Response too slow: ${measurements.responseMs}ms > ${requirements.maxResponseMs}ms`,
       );
     }
   }
@@ -311,57 +343,79 @@ async function waitForReady(
   getOutput: () => string,
 ): Promise<void> {
   return new Promise<void>((resolve, reject) => {
+    let interval: ReturnType<typeof setInterval> | undefined;
+    let pollTimer: ReturnType<typeof setTimeout> | undefined;
+    let settled = false;
+
+    const cleanup = () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error: Error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
+
     const timeout = setTimeout(() => {
       proc.kill("SIGKILL");
-      reject(
+      fail(new Error(
+        `[${name}] Not ready within ${timeoutMs}ms.\nOutput: ${getOutput().slice(-500)}`,
+      ));
+    }, timeoutMs);
+
+    const failIfExited = () => {
+      if (proc.exitCode === null && proc.signalCode === null) return false;
+      fail(
         new Error(
-          `[${name}] Not ready within ${timeoutMs}ms.\nOutput: ${getOutput().slice(-500)}`,
+          `[${name}] Exited before ready.\nOutput: ${getOutput().slice(-500)}`,
         ),
       );
-    }, timeoutMs);
+      return true;
+    };
 
     if (ready.signal) {
       const check = () => {
         if (getOutput().includes(ready.signal!)) {
-          clearTimeout(timeout);
-          resolve();
+          succeed();
           return true;
         }
         return false;
       };
 
       // Check on each stdout/stderr chunk
-      const interval = setInterval(() => {
-        if (check()) clearInterval(interval);
-        if (proc.exitCode !== null) {
-          clearInterval(interval);
-          clearTimeout(timeout);
-          reject(
-            new Error(
-              `[${name}] Exited with code ${proc.exitCode} before ready.\nOutput: ${getOutput().slice(-500)}`,
-            ),
-          );
-        }
+      interval = setInterval(() => {
+        if (check()) return;
+        failIfExited();
       }, 50);
     } else if (ready.url) {
       const pollMs = ready.pollMs ?? 500;
-      const interval = setInterval(async () => {
+      const poll = async () => {
+        if (settled || failIfExited()) return;
         try {
           const res = await fetch(ready.url!, {
             signal: AbortSignal.timeout(1000),
           });
           if (res.ok) {
-            clearInterval(interval);
-            clearTimeout(timeout);
-            resolve();
+            succeed();
+            return;
           }
         } catch {
           // not ready yet
         }
-      }, pollMs);
+        if (!settled) pollTimer = setTimeout(poll, pollMs);
+      };
+      void poll();
     } else {
-      clearTimeout(timeout);
-      reject(new Error(`[${name}] No ready signal or URL configured`));
+      fail(new Error(`[${name}] No ready signal or URL configured`));
     }
   });
 }
@@ -371,31 +425,41 @@ async function stopProcess(
   name: string,
   timeoutMs: number,
 ): Promise<void> {
-  if (proc.killed || proc.exitCode !== null) return;
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
 
   return new Promise<void>((resolve) => {
-    const forceKill = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-        // already dead
-      }
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
+      clearTimeout(forceKill);
+      proc.off("exit", finish);
       resolve();
+    };
+    const forceKill = setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        try {
+          if (!proc.kill("SIGKILL")) finish();
+        } catch {
+          finish();
+        }
+      } else {
+        finish();
+      }
     }, timeoutMs);
 
-    proc.on("exit", () => {
-      clearTimeout(forceKill);
-      resolve();
-    });
-
-    proc.kill("SIGTERM");
+    proc.once("exit", finish);
+    try {
+      if (!proc.kill("SIGTERM")) finish();
+    } catch {
+      finish();
+    }
   });
 }
 
 function getProcessMemory(pid: number): number | null {
   try {
-    const fs = require("node:fs");
-    const status = fs.readFileSync(`/proc/${pid}/status`, "utf-8");
+    const status = readFileSync(`/proc/${pid}/status`, "utf-8");
     const match = status.match(/VmRSS:\s+(\d+)\s+kB/);
     return match ? Math.round(Number(match[1]) / 1024) : null;
   } catch {
@@ -403,12 +467,19 @@ function getProcessMemory(pid: number): number | null {
   }
 }
 
-async function checkGpu(): Promise<boolean> {
+function getGpuMemoryMb(): number | null {
   try {
-    const { execSync } = require("node:child_process");
-    execSync("nvidia-smi", { stdio: "ignore" });
-    return true;
+    const output = execFileSync(
+      "nvidia-smi",
+      ["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] },
+    );
+    const values = output
+      .split(/\r?\n/)
+      .map((value) => Number.parseInt(value.trim(), 10))
+      .filter(Number.isFinite);
+    return values.length > 0 ? Math.max(...values) : null;
   } catch {
-    return false;
+    return null;
   }
 }

@@ -91,9 +91,9 @@ feature("outline()", () => {
       { name: "zeros", a: 0, b: 0, expected: 0 },
     ],
     {
-      given: (row) => ({ a: row.a as number, b: row.b as number }),
-      when:  (ctx) => ctx.a + ctx.b,
-      then:  (result, _ctx, row) => expect(result).toBe(row.expected),
+      given: ["the row's operands", (row) => ({ a: row.a as number, b: row.b as number })],
+      when:  ["adding the operands", (ctx) => ctx.a + ctx.b],
+      then:  ["the expected sum is returned", (result, _ctx, row) => expect(result).toBe(row.expected)],
     },
   );
 });
@@ -108,9 +108,9 @@ feature("outline() with cleanup", () => {
       { name: "row B", value: 2 },
     ],
     {
-      given: (row) => row.value as number,
-      when:  (ctx) => ctx * 2,
-      then:  (result, _ctx, row) => expect(result).toBe((row.value as number) * 2),
+      given: ["the row value", (row) => row.value as number],
+      when:  ["doubling the value", (ctx) => ctx * 2],
+      then:  ["the doubled value is returned", (result, _ctx, row) => expect(result).toBe((row.value as number) * 2)],
       cleanup: () => { cleanupCalls++; },
     },
   );

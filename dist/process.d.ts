@@ -24,6 +24,8 @@ interface StartProcessOptions {
     readySignal: string;
     /** Max time to wait for ready signal (default: 15s) */
     timeoutMs?: number;
+    /** Grace period after SIGTERM before SIGKILL (default: 5s) */
+    stopTimeoutMs?: number;
 }
 interface ManagedProcess {
     process: ChildProcess;

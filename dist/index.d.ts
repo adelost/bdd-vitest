@@ -1,5 +1,7 @@
 export { expect } from 'vitest';
 export { Phase, component, e2e, integration, unit } from './levels.js';
+import './contract.js';
+import 'vitest/reporters';
 
 /**
  * bdd-vitest — Enforced Given/When/Then for Vitest

@@ -10,6 +10,7 @@ export default defineConfig({
     service: "src/service.ts",
     process: "src/process.ts",
     preset: "src/preset.ts",
+    contract: "src/contract.ts",
   },
   format: ["esm"],
   dts: true,

@@ -1,5 +1,3 @@
-import "./chunk-3RG5ZIWI.js";
-
 // src/mock-ai.ts
 function createMockProvider(options = {}) {
   const {

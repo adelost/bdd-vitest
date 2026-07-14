@@ -1,3 +1,6 @@
+import { BddTestMetadata } from './contract.js';
+import 'vitest/reporters';
+
 /**
  * Test levels with enforced constraints.
  *
@@ -13,6 +16,7 @@
  *     then:  ["returns sum", (r) => expect(r).toBe(5)],
  *   });
  */
+
 /** Phase: [description, function] tuple — description is enforced */
 type Phase<TFn> = [desc: string, fn: TFn];
 interface LevelConfig {
@@ -21,7 +25,7 @@ interface LevelConfig {
     /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
     warnAt?: number;
     /** Level name for error messages */
-    name: string;
+    name: BddTestMetadata["level"];
     /** Suggested next level (for warning message) */
     nextLevel?: string;
 }
@@ -37,18 +41,32 @@ interface TableRow {
     name: string;
     [key: string]: unknown;
 }
+interface DocumentedOutline<TContext, TResult, TRow extends TableRow> {
+    given: Phase<(row: TRow) => TContext | Promise<TContext>>;
+    when: Phase<(context: TContext, row: TRow) => TResult | Promise<TResult>>;
+    then: Phase<(result: TResult, context: TContext, row: TRow) => void | Promise<void>>;
+    cleanup?: (context: TContext) => void | Promise<void>;
+    slow?: boolean;
+}
+/** @deprecated Use DocumentedOutline so every phase is exported as documentation. */
+interface LegacyOutline<TContext, TResult, TRow extends TableRow> {
+    given: (row: TRow) => TContext | Promise<TContext>;
+    when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
+    then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
+    cleanup?: (context: TContext) => void | Promise<void>;
+    slow?: boolean;
+}
+interface OutlineRunner {
+    <TRow extends TableRow, TContext, TResult>(name: string, table: TRow[], phases: DocumentedOutline<TContext, TResult, TRow>): void;
+    /** @deprecated Add descriptions to given/when/then tuples. */
+    <TRow extends TableRow, TContext, TResult>(name: string, table: TRow[], phases: LegacyOutline<TContext, TResult, TRow>): void;
+}
 interface LevelRunner {
     <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
     skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
     only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
     group: (name: string, fn: () => void) => void;
-    outline: <TRow extends TableRow, TContext, TResult>(name: string, table: TRow[], phases: {
-        given: (row: TRow) => TContext | Promise<TContext>;
-        when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
-        then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
-        cleanup?: (context: TContext) => void | Promise<void>;
-        slow?: boolean;
-    }) => void;
+    outline: OutlineRunner;
 }
 /** Pure logic. No I/O, no mocks, no services. <100ms. */
 declare const unit: LevelRunner;
@@ -59,4 +77,4 @@ declare const integration: LevelRunner;
 /** Full system, browser, network. <120s. */
 declare const e2e: LevelRunner;
 
-export { type LevelConfig, type LevelRunner, type LevelScenario, type Phase, type TableRow, component, e2e, integration, unit };
+export { type DocumentedOutline, type LegacyOutline, type LevelConfig, type LevelRunner, type LevelScenario, type OutlineRunner, type Phase, type TableRow, component, e2e, integration, unit };

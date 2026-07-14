@@ -1,25 +1,25 @@
-import "./chunk-3RG5ZIWI.js";
+import {
+  bddContractReporter
+} from "./chunk-OBIARVBA.js";
 
 // src/preset.ts
 import { defineConfig } from "vitest/config";
-function bddConfig(overrides = {}) {
+function bddConfig(overrides = {}, contract = {}) {
+  const { test: testOverrides = {}, ...rootOverrides } = overrides;
+  const configuredReporters = testOverrides.reporters === void 0 ? ["default"] : Array.isArray(testOverrides.reporters) ? testOverrides.reporters : [testOverrides.reporters];
   return defineConfig({
+    ...rootOverrides,
     test: {
       // Sensible defaults for service-based tests
       testTimeout: 3e4,
       hookTimeout: 2e4,
-      // Group by test level
-      include: [
-        "test/**/*.test.ts",
-        "test/**/*.spec.ts"
-      ],
       // Run unit tests first (fast feedback)
       sequence: {
         concurrent: false
       },
-      ...overrides.test ?? {}
-    },
-    ...overrides
+      ...testOverrides,
+      reporters: [...configuredReporters, bddContractReporter(contract)]
+    }
   });
 }
 export {

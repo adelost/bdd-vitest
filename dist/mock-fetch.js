@@ -1,5 +1,3 @@
-import "./chunk-3RG5ZIWI.js";
-
 // src/mock-fetch.ts
 function normalizeResponse(raw) {
   if (typeof raw === "number") {
@@ -24,7 +22,8 @@ function mockFetch(routes) {
     const calls = {};
     globalThis.fetch = (async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method = init?.method?.toUpperCase() ?? "GET";
+      const requestMethod = typeof Request !== "undefined" && input instanceof Request ? input.method : void 0;
+      const method = (init?.method ?? requestMethod ?? "GET").toUpperCase();
       const routeKey = `${method} ${url}`;
       const route = routes[routeKey] ?? routes[url];
       if (route === void 0) {

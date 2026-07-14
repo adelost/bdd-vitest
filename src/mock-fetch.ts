@@ -61,7 +61,10 @@ export function mockFetch(routes: MockFetchRoutes): () => MockFetchInstance {
 
     globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
-      const method = init?.method?.toUpperCase() ?? "GET";
+      const requestMethod = typeof Request !== "undefined" && input instanceof Request
+        ? input.method
+        : undefined;
+      const method = (init?.method ?? requestMethod ?? "GET").toUpperCase();
       const routeKey = `${method} ${url}`;
 
       // Try exact match, then without method, then URL prefix match

@@ -88,9 +88,9 @@ unit.outline("outline with cleanup", [
   { name: "first", x: 1 },
   { name: "second", x: 2 },
 ], {
-  given: (row) => row.x as number,
-  when:  (ctx) => ctx + 10,
-  then:  (result, _ctx, row) => expect(result).toBe((row.x as number) + 10),
+  given: ["the row value", (row) => row.x as number],
+  when:  ["adding ten", (ctx) => ctx + 10],
+  then:  ["the expected value is returned", (result, _ctx, row) => expect(result).toBe((row.x as number) + 10)],
   cleanup: () => { /* verify no throw */ },
 });
 

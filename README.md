@@ -20,17 +20,42 @@ Read just the descriptions. You understand the system without opening production
 
 Most test frameworks let you write `it("does something", () => {})` with no structure inside. AI agents (and tired humans) skip descriptions, skip assertions, write tests that pass but prove nothing.
 
-bdd-vitest makes it impossible:
+bdd-vitest makes the structure enforceable:
 
 - **Descriptions are required.** Every phase is a `["description", fn]` tuple. TypeScript rejects missing descriptions at compile time.
 - **Levels are required.** No generic `scenario`. You must pick `unit`, `component`, `integration`, or `e2e`. Each has enforced timeouts.
-- **Assertions are required.** `then` is mandatory. No test without a check.
+- **An explicit outcome is required.** `then` is mandatory. The callback can use Vitest, Node, or domain-specific assertions.
 
 ## Install
 
 ```bash
 npm install -D bdd-vitest
 ```
+
+## Hard contract
+
+Every level runner writes machine-readable metadata containing the level,
+scenario, and phase descriptions. Enable the preset to reject tests that
+bypass the BDD API with a bare `it()` or `test()`:
+
+```ts
+// vitest.config.ts
+import { bddConfig } from "bdd-vitest/preset";
+
+export default bddConfig({
+  test: { environment: "node" },
+});
+```
+
+For an existing mixed suite, migrate without losing visibility:
+
+```ts
+export default bddConfig({}, { policy: "warn" });
+```
+
+The default policy is `error`. JSON and custom reporters also receive the BDD
+metadata, so the descriptions are usable as generated test documentation. See
+[`CONTRACT.md`](./CONTRACT.md) for the exact invariants.
 
 ## Levels
 
@@ -164,9 +189,9 @@ unit.outline("adds numbers", [
   { name: "positives",  a: 2,  b: 3, expected: 5 },
   { name: "negatives",  a: -1, b: 1, expected: 0 },
 ], {
-  given: (row) => ({ a: row.a as number, b: row.b as number }),
-  when:  (ctx) => ctx.a + ctx.b,
-  then:  (result, _ctx, row) => expect(result).toBe(row.expected),
+  given: ["the row operands", (row) => ({ a: row.a as number, b: row.b as number })],
+  when:  ["adding the operands", (ctx) => ctx.a + ctx.b],
+  then:  ["the expected sum is returned", (result, _ctx, row) => expect(result).toBe(row.expected)],
 });
 ```
 
@@ -302,6 +327,12 @@ feature("Ship AI", () => {
 | `mockServer(routes)` | Declarative HTTP mock server |
 | `mockFetch(routes)` | Patches global fetch |
 | `expect` | Re-exported from vitest |
+| `bddConfig(overrides, contract)` | Preset with hard BDD collection enforcement |
+| `bddContractReporter(options)` | Add enforcement to an existing Vitest config |
+
+The process, service, HTTP mock, and AI mock subpaths are testkit helpers. The
+BDD contract itself is defined only by the root, `levels`, `preset`, and
+`contract` exports.
 
 ## License
 

@@ -1,9 +1,7 @@
-import {
-  __require
-} from "./chunk-3RG5ZIWI.js";
-
 // src/service.ts
-import { spawn } from "child_process";
+import { execFileSync, spawn } from "child_process";
+import { readFileSync } from "fs";
+import { totalmem } from "os";
 import { afterAll } from "vitest";
 var activeProcesses = /* @__PURE__ */ new Set();
 function registerProcess(proc) {
@@ -20,9 +18,6 @@ function killAll() {
   activeProcesses.clear();
 }
 process.on("exit", killAll);
-process.on("SIGINT", killAll);
-process.on("SIGTERM", killAll);
-process.on("uncaughtException", killAll);
 async function startService(config) {
   const {
     name,
@@ -36,11 +31,24 @@ async function startService(config) {
     stopTimeoutMs = 5e3,
     requires
   } = config;
-  if (requires?.gpu) {
-    const hasGpu = await checkGpu();
-    if (!hasGpu) {
+  if (requires?.minRamMb !== void 0) {
+    const availableRamMb = Math.round(totalmem() / 1024 / 1024);
+    if (availableRamMb < requires.minRamMb) {
+      throw new Error(
+        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${availableRamMb}MB`
+      );
+    }
+  }
+  if (requires?.gpu || requires?.minVramMb !== void 0) {
+    const gpuMemoryMb = getGpuMemoryMb();
+    if (gpuMemoryMb === null) {
       throw new Error(
         `[${name}] Requires GPU but none detected. Skip with: integration.skip(...)`
+      );
+    }
+    if (requires.minVramMb !== void 0 && gpuMemoryMb < requires.minVramMb) {
+      throw new Error(
+        `[${name}] Requires ${requires.minVramMb}MB VRAM but largest GPU has ${gpuMemoryMb}MB`
       );
     }
   }
@@ -128,7 +136,7 @@ function autoCleanup(service) {
     }
   });
 }
-function assertPerformance(service, requirements) {
+function assertPerformance(service, requirements, measurements = {}) {
   if (requirements.maxStartupMs !== void 0) {
     if (service.startupMs > requirements.maxStartupMs) {
       throw new Error(
@@ -144,6 +152,18 @@ function assertPerformance(service, requirements) {
       );
     }
   }
+  if (requirements.maxResponseMs !== void 0) {
+    if (measurements.responseMs === void 0) {
+      throw new Error(
+        `[${service.name}] maxResponseMs requires measurements.responseMs`
+      );
+    }
+    if (measurements.responseMs > requirements.maxResponseMs) {
+      throw new Error(
+        `[${service.name}] Response too slow: ${measurements.responseMs}ms > ${requirements.maxResponseMs}ms`
+      );
+    }
+  }
 }
 async function measureMs(fn) {
   const start = performance.now();
@@ -152,92 +172,127 @@ async function measureMs(fn) {
 }
 async function waitForReady(proc, name, ready, timeoutMs, getOutput) {
   return new Promise((resolve, reject) => {
+    let interval;
+    let pollTimer;
+    let settled = false;
+    const cleanup = () => {
+      clearTimeout(timeout);
+      if (interval) clearInterval(interval);
+      if (pollTimer) clearTimeout(pollTimer);
+    };
+    const succeed = () => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      resolve();
+    };
+    const fail = (error) => {
+      if (settled) return;
+      settled = true;
+      cleanup();
+      reject(error);
+    };
     const timeout = setTimeout(() => {
       proc.kill("SIGKILL");
-      reject(
+      fail(new Error(
+        `[${name}] Not ready within ${timeoutMs}ms.
+Output: ${getOutput().slice(-500)}`
+      ));
+    }, timeoutMs);
+    const failIfExited = () => {
+      if (proc.exitCode === null && proc.signalCode === null) return false;
+      fail(
         new Error(
-          `[${name}] Not ready within ${timeoutMs}ms.
+          `[${name}] Exited before ready.
 Output: ${getOutput().slice(-500)}`
         )
       );
-    }, timeoutMs);
+      return true;
+    };
     if (ready.signal) {
       const check = () => {
         if (getOutput().includes(ready.signal)) {
-          clearTimeout(timeout);
-          resolve();
+          succeed();
           return true;
         }
         return false;
       };
-      const interval = setInterval(() => {
-        if (check()) clearInterval(interval);
-        if (proc.exitCode !== null) {
-          clearInterval(interval);
-          clearTimeout(timeout);
-          reject(
-            new Error(
-              `[${name}] Exited with code ${proc.exitCode} before ready.
-Output: ${getOutput().slice(-500)}`
-            )
-          );
-        }
+      interval = setInterval(() => {
+        if (check()) return;
+        failIfExited();
       }, 50);
     } else if (ready.url) {
       const pollMs = ready.pollMs ?? 500;
-      const interval = setInterval(async () => {
+      const poll = async () => {
+        if (settled || failIfExited()) return;
         try {
           const res = await fetch(ready.url, {
             signal: AbortSignal.timeout(1e3)
           });
           if (res.ok) {
-            clearInterval(interval);
-            clearTimeout(timeout);
-            resolve();
+            succeed();
+            return;
           }
         } catch {
         }
-      }, pollMs);
+        if (!settled) pollTimer = setTimeout(poll, pollMs);
+      };
+      void poll();
     } else {
-      clearTimeout(timeout);
-      reject(new Error(`[${name}] No ready signal or URL configured`));
+      fail(new Error(`[${name}] No ready signal or URL configured`));
     }
   });
 }
 async function stopProcess(proc, name, timeoutMs) {
-  if (proc.killed || proc.exitCode !== null) return;
+  if (proc.exitCode !== null || proc.signalCode !== null) return;
   return new Promise((resolve) => {
-    const forceKill = setTimeout(() => {
-      try {
-        proc.kill("SIGKILL");
-      } catch {
-      }
-      resolve();
-    }, timeoutMs);
-    proc.on("exit", () => {
+    let finished = false;
+    const finish = () => {
+      if (finished) return;
+      finished = true;
       clearTimeout(forceKill);
+      proc.off("exit", finish);
       resolve();
-    });
-    proc.kill("SIGTERM");
+    };
+    const forceKill = setTimeout(() => {
+      if (proc.exitCode === null && proc.signalCode === null) {
+        try {
+          if (!proc.kill("SIGKILL")) finish();
+        } catch {
+          finish();
+        }
+      } else {
+        finish();
+      }
+    }, timeoutMs);
+    proc.once("exit", finish);
+    try {
+      if (!proc.kill("SIGTERM")) finish();
+    } catch {
+      finish();
+    }
   });
 }
 function getProcessMemory(pid) {
   try {
-    const fs = __require("fs");
-    const status = fs.readFileSync(`/proc/${pid}/status`, "utf-8");
+    const status = readFileSync(`/proc/${pid}/status`, "utf-8");
     const match = status.match(/VmRSS:\s+(\d+)\s+kB/);
     return match ? Math.round(Number(match[1]) / 1024) : null;
   } catch {
     return null;
   }
 }
-async function checkGpu() {
+function getGpuMemoryMb() {
   try {
-    const { execSync } = __require("child_process");
-    execSync("nvidia-smi", { stdio: "ignore" });
-    return true;
+    const output = execFileSync(
+      "nvidia-smi",
+      ["--query-gpu=memory.total", "--format=csv,noheader,nounits"],
+      { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] }
+    );
+    const values = output.split(/\r?\n/).map((value) => Number.parseInt(value.trim(), 10)).filter(Number.isFinite);
+    return values.length > 0 ? Math.max(...values) : null;
   } catch {
-    return false;
+    return null;
   }
 }
 export {
