@@ -4,9 +4,13 @@ import type { TestModule } from "vitest/node";
 export type BddContractPolicy = "off" | "warn" | "error";
 
 export interface BddContractOptions {
-  /** What to do with tests not registered through a BDD level runner. */
+  /** Enforce that tests are registered through exactly one BDD level runner. */
+  levelPolicy?: BddContractPolicy;
+  /** Enforce scenario and phase documentation. */
+  documentationPolicy?: BddContractPolicy;
+  /** @deprecated Use levelPolicy. */
   policy?: BddContractPolicy;
-  /** Require explicit Given/When/Then descriptions, including outlines. */
+  /** @deprecated Use documentationPolicy (false maps to off). */
   requirePhaseDescriptions?: boolean;
 }
 
@@ -33,39 +37,59 @@ interface LegacyTask {
   tasks?: LegacyTask[];
 }
 
-function metadataViolation(
+interface ContractViolation {
+  kind: "level" | "documentation";
+  message: string;
+}
+
+function levelViolation(message: string): ContractViolation {
+  return { kind: "level", message };
+}
+
+function documentationViolation(message: string): ContractViolation {
+  return { kind: "documentation", message };
+}
+
+function metadataViolations(
   name: string,
   meta: Record<string, unknown> | undefined,
   requirePhaseDescriptions: boolean,
-): string | undefined {
+): ContractViolation[] {
   const bdd = meta?.bdd;
   if (!bdd || typeof bdd !== "object") {
-    return `${name}: missing bdd metadata (use unit/component/integration/e2e)`;
+    return [
+      levelViolation(`${name}: missing bdd metadata (use unit/component/integration/e2e)`),
+      documentationViolation(`${name}: missing bdd scenario and phase documentation`),
+    ];
   }
   const metadata = bdd as Partial<BddTestMetadata>;
-  if (metadata.version !== 1) return `${name}: unsupported bdd metadata version`;
+  const violations: ContractViolation[] = [];
+  if (metadata.version !== 1) {
+    violations.push(levelViolation(`${name}: unsupported bdd metadata version`));
+  }
   if (!(["unit", "component", "integration", "e2e"] as unknown[]).includes(metadata.level)) {
-    return `${name}: invalid bdd level`;
+    violations.push(levelViolation(`${name}: invalid bdd level`));
   }
   if (typeof metadata.scenario !== "string" || !metadata.scenario.trim()) {
-    return `${name}: missing scenario description`;
+    violations.push(documentationViolation(`${name}: missing scenario description`));
   }
   if (!metadata.phases || typeof metadata.phases !== "object") {
-    return `${name}: missing phase descriptions`;
-  }
-  if (typeof metadata.phases.then !== "string" || !metadata.phases.then.trim()) {
-    return `${name}: missing then description`;
-  }
-  for (const phase of ["given", "when"] as const) {
-    const description = metadata.phases[phase];
-    if (description !== undefined && (typeof description !== "string" || !description.trim())) {
-      return `${name}: invalid ${phase} description`;
+    violations.push(documentationViolation(`${name}: missing phase descriptions`));
+  } else {
+    if (typeof metadata.phases.then !== "string" || !metadata.phases.then.trim()) {
+      violations.push(documentationViolation(`${name}: missing then description`));
+    }
+    for (const phase of ["given", "when"] as const) {
+      const description = metadata.phases[phase];
+      if (description !== undefined && (typeof description !== "string" || !description.trim())) {
+        violations.push(documentationViolation(`${name}: invalid ${phase} description`));
+      }
     }
   }
   if (requirePhaseDescriptions && !metadata.documented) {
-    return `${name}: outline phases need explicit descriptions`;
+    violations.push(documentationViolation(`${name}: outline phases need explicit descriptions`));
   }
-  return undefined;
+  return violations;
 }
 
 function emitViolations(violations: string[], policy: BddContractPolicy): void {
@@ -85,6 +109,11 @@ function emitViolations(violations: string[], policy: BddContractPolicy): void {
   process.exitCode = 1;
 }
 
+function validatePolicy(value: unknown, label: string): BddContractPolicy {
+  if (value === "off" || value === "warn" || value === "error") return value;
+  throw new Error(`${label} must be one of: off, warn, error`);
+}
+
 function collectLegacyTests(task: LegacyTask): LegacyTask[] {
   const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
   return task.type === "test" ? [task, ...children] : children;
@@ -96,22 +125,40 @@ function collectLegacyTests(task: LegacyTask): LegacyTask[] {
  * legacy `onCollected` hook.
  */
 export function bddContractReporter(options: BddContractOptions = {}): Reporter {
-  const policy = options.policy ?? "error";
-  const requirePhaseDescriptions = options.requirePhaseDescriptions ?? true;
+  const levelPolicy = validatePolicy(
+    options.levelPolicy ?? options.policy ?? "error",
+    "levelPolicy",
+  );
+  const documentationPolicy = validatePolicy(
+    options.documentationPolicy
+      ?? (options.requirePhaseDescriptions === false ? "off" : "error"),
+    "documentationPolicy",
+  );
+  const requirePhaseDescriptions = documentationPolicy !== "off";
   const checkedModules = new Set<string>();
+
+  const report = (violations: ContractViolation[]) => {
+    emitViolations(
+      violations.filter(({ kind }) => kind === "level").map(({ message }) => message),
+      levelPolicy,
+    );
+    emitViolations(
+      violations.filter(({ kind }) => kind === "documentation").map(({ message }) => message),
+      documentationPolicy,
+    );
+  };
 
   const reporter = {
     onTestModuleCollected(module: TestModule) {
       if (checkedModules.has(module.moduleId)) return;
       checkedModules.add(module.moduleId);
       const violations = [...module.children.allTests()]
-        .map((test) => metadataViolation(
+        .flatMap((test) => metadataViolations(
           test.fullName,
           test.meta() as unknown as Record<string, unknown>,
           requirePhaseDescriptions,
-        ))
-        .filter((violation): violation is string => violation !== undefined);
-      emitViolations(violations, policy);
+        ));
+      report(violations);
     },
     onCollected(files: LegacyTask[]) {
       for (const file of files) {
@@ -119,9 +166,12 @@ export function bddContractReporter(options: BddContractOptions = {}): Reporter 
         if (moduleId && checkedModules.has(moduleId)) continue;
         if (moduleId) checkedModules.add(moduleId);
         const violations = collectLegacyTests(file)
-          .map((test) => metadataViolation(test.name ?? "unnamed test", test.meta, requirePhaseDescriptions))
-          .filter((violation): violation is string => violation !== undefined);
-        emitViolations(violations, policy);
+          .flatMap((test) => metadataViolations(
+            test.name ?? "unnamed test",
+            test.meta,
+            requirePhaseDescriptions,
+          ));
+        report(violations);
       }
     },
   };

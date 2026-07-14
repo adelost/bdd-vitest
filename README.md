@@ -32,6 +32,9 @@ bdd-vitest makes the structure enforceable:
 npm install -D bdd-vitest
 ```
 
+The package ships both ESM and CommonJS entry points, so it works from `vitest.config.ts` in
+projects with or without `"type": "module"`.
+
 ## Hard contract
 
 Every level runner writes machine-readable metadata containing the level,
@@ -50,11 +53,16 @@ export default bddConfig({
 For an existing mixed suite, migrate without losing visibility:
 
 ```ts
-export default bddConfig({}, { policy: "warn" });
+export default bddConfig({}, {
+  levelPolicy: "warn",
+  documentationPolicy: "warn",
+});
 ```
 
-The default policy is `error`. JSON and custom reporters also receive the BDD
-metadata, so the descriptions are usable as generated test documentation. See
+Both policies accept `off`, `warn`, or `error`; the preset defaults both to
+`error`. This matches bdd-pytest's contract vocabulary while allowing level
+and documentation migrations to advance independently. JSON and custom
+reporters also receive the BDD metadata, so the descriptions are usable as generated test documentation. See
 [`CONTRACT.md`](./CONTRACT.md) for the exact invariants.
 
 ## Levels
@@ -112,13 +120,16 @@ unit("FIFO order", {
 });
 ```
 
-Errors show which phase failed:
+Errors identify level, phase, scenario, and the documented step:
 
 ```
-AssertionError: [given] Database connection failed
-AssertionError: [when] Request timeout
-AssertionError: [then] expected 42 to be 43
+AssertionError: [integration/given] loads profile > a seeded database: connection refused
+AssertionError: [component/when] loads profile > requesting profile: read timed out
+AssertionError: [unit/then] calculates total > total is 42: expected 41 to be 42
 ```
+
+If both the scenario and cleanup fail, both errors are retained in an
+`AggregateError`; teardown can no longer hide the original assertion failure.
 
 ## Mock server
 
@@ -194,6 +205,9 @@ unit.outline("adds numbers", [
   then:  ["the expected sum is returned", (result, _ctx, row) => expect(result).toBe(row.expected)],
 });
 ```
+
+`given` and `when` are optional in outlines just as they are in single scenarios. Every phase that
+is present must use a description tuple, and every row must have a unique, non-empty `name`.
 
 ## Grouping
 

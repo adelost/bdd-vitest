@@ -3,17 +3,25 @@ import {
   e2e,
   integration,
   unit
-} from "./chunk-K6HM4KDR.js";
+} from "./chunk-6MSRUP4P.js";
 
 // src/index.ts
 import { describe } from "vitest";
 import { expect } from "vitest";
+function validateGroup(name, fn, label) {
+  if (typeof name !== "string" || !name.trim()) {
+    throw new Error(`${label} requires a non-empty name`);
+  }
+  if (typeof fn !== "function") {
+    throw new Error(`${label} callback must be a function`);
+  }
+}
 function feature(name, fn) {
-  if (!name.trim()) throw new Error("feature requires a non-empty name");
+  validateGroup(name, fn, "feature");
   describe(name, fn);
 }
 function rule(name, fn) {
-  if (!name.trim()) throw new Error("rule requires a non-empty name");
+  validateGroup(name, fn, "rule");
   describe(name, fn);
 }
 export {

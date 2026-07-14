@@ -1,6 +1,6 @@
 export { expect } from 'vitest';
-export { DocumentedOutline, LegacyOutline, LevelRunner, LevelScenario, OutlineRunner, Phase, TableRow, component, e2e, integration, unit } from './levels.js';
-import './contract.js';
+export { DocumentedOutline, LegacyOutline, LevelRunner, LevelScenario, OutlineRunner, Phase, TableRow, component, e2e, integration, unit } from './levels.cjs';
+import './contract.cjs';
 import 'vitest/reporters';
 
 /**

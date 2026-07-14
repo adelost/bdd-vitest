@@ -29,3 +29,13 @@ jobs:
       - run: pnpm test
       - run: pnpm build
       - run: npm pack --dry-run
+      - name: Test installed package
+        run: |
+          package="$(npm pack --silent)"
+          consumer="$RUNNER_TEMP/bdd-vitest-consumer"
+          mkdir -p "$consumer"
+          cp test/package-smoke/* "$consumer/"
+          cd "$consumer"
+          npm init -y
+          npm install "$GITHUB_WORKSPACE/$package" "vitest@${{ matrix.vitest }}"
+          npx vitest run

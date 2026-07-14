@@ -1,5 +1,5 @@
 import { ViteUserConfig } from 'vitest/config';
-import { BddContractOptions } from './contract.js';
+import { BddContractOptions } from './contract.cjs';
 import 'vitest/reporters';
 
 /**

@@ -1,4 +1,4 @@
-import { BddTestMetadata } from './contract.js';
+import { BddTestMetadata } from './contract.cjs';
 import 'vitest/reporters';
 
 /**

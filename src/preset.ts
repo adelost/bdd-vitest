@@ -13,7 +13,7 @@ import { bddContractReporter, type BddContractOptions } from "./contract.js";
 
 /**
  * Vitest config with BDD contracts enabled. Native `it`/`test` cases are
- * rejected by default; pass `{ policy: "warn" }` during a staged migration.
+ * rejected by default; set either policy to `warn` during a staged migration.
  */
 export function bddConfig(
   overrides: ViteUserConfig = {},

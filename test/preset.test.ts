@@ -97,4 +97,56 @@ describe("bddContractReporter()", () => {
       "metadata version",
     );
   });
+
+  it("can migrate level and documentation enforcement independently", () => {
+    const previousExitCode = process.exitCode;
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    const warning = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const reporter = bddContractReporter({
+        levelPolicy: "warn",
+        documentationPolicy: "error",
+      });
+      reporter.onTestModuleCollected?.(fakeModule([
+        { name: "native test" },
+        {
+          name: "undocumented test",
+          meta: {
+            bdd: {
+              version: 1,
+              level: "unit",
+              scenario: "undocumented test",
+              phases: {},
+              documented: true,
+            },
+          },
+        },
+      ]) as never);
+      expect(warning).toHaveBeenCalledWith(expect.stringContaining("missing bdd metadata"));
+      expect(error).toHaveBeenCalledWith(expect.stringContaining("missing then description"));
+      expect(process.exitCode).toBe(1);
+    } finally {
+      process.exitCode = previousExitCode;
+      error.mockRestore();
+      warning.mockRestore();
+    }
+  });
+
+  it("still enforces documentation when level enforcement is off", () => {
+    const reporter = bddContractReporter({
+      levelPolicy: "off",
+      documentationPolicy: "error",
+    });
+    expectContractFailure(
+      () => reporter.onTestModuleCollected?.(fakeModule([
+        { name: "native undocumented test" },
+      ]) as never),
+      "missing bdd scenario and phase documentation",
+    );
+  });
+
+  it("rejects invalid policy values at configuration time", () => {
+    expect(() => bddContractReporter({ levelPolicy: "invalid" as never }))
+      .toThrow("levelPolicy must be one of: off, warn, error");
+  });
 });

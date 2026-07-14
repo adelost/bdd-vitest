@@ -22,7 +22,24 @@ export { expect } from "vitest";
 export { unit, component, integration, e2e } from "./levels.js";
 
 // Re-export types used by levels
-export type { Phase } from "./levels.js";
+export type {
+  DocumentedOutline,
+  LegacyOutline,
+  LevelRunner,
+  LevelScenario,
+  OutlineRunner,
+  Phase,
+  TableRow,
+} from "./levels.js";
+
+function validateGroup(name: unknown, fn: unknown, label: string): asserts fn is () => void {
+  if (typeof name !== "string" || !name.trim()) {
+    throw new Error(`${label} requires a non-empty name`);
+  }
+  if (typeof fn !== "function") {
+    throw new Error(`${label} callback must be a function`);
+  }
+}
 
 // --- Core: feature ---
 
@@ -30,7 +47,7 @@ export type { Phase } from "./levels.js";
  * Groups related scenarios. Alias for describe with intent.
  */
 export function feature(name: string, fn: () => void): void {
-  if (!name.trim()) throw new Error("feature requires a non-empty name");
+  validateGroup(name, fn, "feature");
   describe(name, fn);
 }
 
@@ -40,6 +57,6 @@ export function feature(name: string, fn: () => void): void {
  * Sub-groups within a feature for related business rules.
  */
 export function rule(name: string, fn: () => void): void {
-  if (!name.trim()) throw new Error("rule requires a non-empty name");
+  validateGroup(name, fn, "rule");
   describe(name, fn);
 }

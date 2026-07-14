@@ -18,23 +18,44 @@ import { describe, it } from "vitest";
 import type { BddTestMetadata } from "./contract.js";
 
 /** Phase: [description, function] tuple — description is enforced */
-export type Phase<TFn> = [desc: string, fn: TFn];
+export type Phase<TFn> = readonly [desc: string, fn: TFn];
 
-function requireDescription(value: string, label: string): void {
-  if (!value.trim()) throw new Error(`${label} requires a non-empty description`);
+function requireDescription(value: unknown, label: string): asserts value is string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${label} requires a non-empty description`);
+  }
 }
 
-function validatePhaseDescriptions<TContext, TResult>(
+function validatePhase(value: unknown, label: string): asserts value is Phase<(...args: never[]) => unknown> {
+  if (!Array.isArray(value) || value.length !== 2) {
+    throw new Error(`${label} must be a [description, callback] tuple`);
+  }
+  requireDescription(value[0], label);
+  if (typeof value[1] !== "function") {
+    throw new Error(`${label} callback must be a function`);
+  }
+}
+
+function validateScenario<TContext, TResult>(
   phases: LevelScenario<TContext, TResult>,
 ): void {
-  if (Array.isArray(phases.given) && !phases.given[0].trim()) {
-    throw new Error("given requires a non-empty description");
+  if (!phases || typeof phases !== "object") {
+    throw new Error("scenario phases must be an object");
   }
-  if (phases.when && !phases.when[0].trim()) {
-    throw new Error("when requires a non-empty description");
+  if (typeof phases.given === "string") {
+    requireDescription(phases.given, "given");
+  } else if (phases.given !== undefined) {
+    validatePhase(phases.given, "given");
   }
-  if (!phases.then[0].trim()) {
-    throw new Error("then requires a non-empty description");
+  if (phases.when !== undefined) {
+    validatePhase(phases.when, "when");
+  }
+  validatePhase(phases.then, "then");
+  if (phases.cleanup !== undefined && typeof phases.cleanup !== "function") {
+    throw new Error("cleanup callback must be a function");
+  }
+  if (phases.slow !== undefined && typeof phases.slow !== "boolean") {
+    throw new Error("slow must be a boolean");
   }
 }
 
@@ -93,15 +114,59 @@ export interface LevelScenario<TContext, TResult> {
   slow?: boolean;
 }
 
+type RuntimePhase = "given" | "when" | "then" | "cleanup";
+
+function phaseDescription<TContext, TResult>(
+  phases: LevelScenario<TContext, TResult>,
+  phase: RuntimePhase,
+): string {
+  if (phase === "given") {
+    return typeof phases.given === "string" ? phases.given : phases.given?.[0] ?? "setup";
+  }
+  if (phase === "when") return phases.when?.[0] ?? "action";
+  if (phase === "then") return phases.then[0];
+  return "cleanup completes";
+}
+
+function tagScenarioError(
+  error: unknown,
+  level: LevelConfig,
+  phase: RuntimePhase,
+  scenario: string,
+  description: string,
+): Error {
+  const prefix = `[${level.name}/${phase}] ${scenario} > ${description}`;
+  if (error instanceof Error) {
+    if (!error.message.startsWith("[")) error.message = `${prefix}: ${error.message}`;
+    return error;
+  }
+  return new Error(`${prefix}: ${String(error)}`, { cause: error });
+}
+
+function aggregateScenarioFailures(
+  level: LevelConfig,
+  scenario: string,
+  primary: Error,
+  cleanup: Error,
+): AggregateError {
+  const message = [
+    `[${level.name}/cleanup] ${scenario}: scenario and cleanup both failed`,
+    `- ${primary.message}`,
+    `- ${cleanup.message}`,
+  ].join("\n");
+  return new AggregateError([primary, cleanup], message);
+}
+
 async function executeScenario<TContext, TResult>(
   name: string,
   phases: LevelScenario<TContext, TResult>,
   level: LevelConfig,
 ): Promise<void> {
-  validatePhaseDescriptions(phases);
+  validateScenario(phases);
   const start = performance.now();
-  let phase = "given";
+  let phase: RuntimePhase = "given";
   let context: TContext = undefined as TContext;
+  let primaryFailure: Error | undefined;
 
   try {
     if (phases.given && typeof phases.given !== "string") {
@@ -114,15 +179,34 @@ async function executeScenario<TContext, TResult>(
     phase = "then";
     await phases.then[1](result, context);
   } catch (error) {
-    if (error instanceof Error && !error.message.startsWith("[")) {
-      error.message = `[${phase}] ${error.message}`;
-    }
-    throw error;
-  } finally {
-    if (phases.cleanup) {
+    primaryFailure = tagScenarioError(
+      error,
+      level,
+      phase,
+      name,
+      phaseDescription(phases, phase),
+    );
+  }
+
+  if (phases.cleanup) {
+    try {
       await phases.cleanup(context);
+    } catch (error) {
+      const cleanupFailure = tagScenarioError(
+        error,
+        level,
+        "cleanup",
+        name,
+        phaseDescription(phases, "cleanup"),
+      );
+      if (primaryFailure) {
+        throw aggregateScenarioFailures(level, name, primaryFailure, cleanupFailure);
+      }
+      throw cleanupFailure;
     }
   }
+
+  if (primaryFailure) throw primaryFailure;
 
   const elapsed = performance.now() - start;
   const warnAt = level.warnAt ?? level.timeout * 0.5;
@@ -140,7 +224,7 @@ function createLevelRunner(level: LevelConfig) {
     phases: LevelScenario<TContext, TResult>,
   ): void {
     requireDescription(name, level.name);
-    validatePhaseDescriptions(phases);
+    validateScenario(phases);
     it(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
       executeScenario(name, phases, level));
   }
@@ -151,7 +235,7 @@ function createLevelRunner(level: LevelConfig) {
     phases: LevelScenario<TContext, TResult>,
   ): void {
     requireDescription(name, level.name);
-    validatePhaseDescriptions(phases);
+    validateScenario(phases);
     it.skip(name, testOptions(level, scenarioMetadata(level, name, phases)), () => {});
   };
 
@@ -160,7 +244,7 @@ function createLevelRunner(level: LevelConfig) {
     phases: LevelScenario<TContext, TResult>,
   ): void {
     requireDescription(name, level.name);
-    validatePhaseDescriptions(phases);
+    validateScenario(phases);
     it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
       executeScenario(name, phases, level));
   };
@@ -173,6 +257,7 @@ function createLevelRunner(level: LevelConfig) {
 function createLevelGroup(level: LevelConfig) {
   return function group(name: string, fn: () => void): void {
     requireDescription(name, `${level.name}.group`);
+    if (typeof fn !== "function") throw new Error(`${level.name}.group callback must be a function`);
     describe(`[${level.name}] ${name}`, fn);
   };
 }
@@ -185,8 +270,8 @@ export interface TableRow {
 }
 
 export interface DocumentedOutline<TContext, TResult, TRow extends TableRow> {
-  given: Phase<(row: TRow) => TContext | Promise<TContext>>;
-  when: Phase<(context: TContext, row: TRow) => TResult | Promise<TResult>>;
+  given?: Phase<(row: TRow) => TContext | Promise<TContext>>;
+  when?: Phase<(context: TContext, row: TRow) => TResult | Promise<TResult>>;
   then: Phase<(result: TResult, context: TContext, row: TRow) => void | Promise<void>>;
   cleanup?: (context: TContext) => void | Promise<void>;
   slow?: boolean;
@@ -194,8 +279,8 @@ export interface DocumentedOutline<TContext, TResult, TRow extends TableRow> {
 
 /** @deprecated Use DocumentedOutline so every phase is exported as documentation. */
 export interface LegacyOutline<TContext, TResult, TRow extends TableRow> {
-  given: (row: TRow) => TContext | Promise<TContext>;
-  when: (context: TContext, row: TRow) => TResult | Promise<TResult>;
+  given?: (row: TRow) => TContext | Promise<TContext>;
+  when?: (context: TContext, row: TRow) => TResult | Promise<TResult>;
   then: (result: TResult, context: TContext, row: TRow) => void | Promise<void>;
   cleanup?: (context: TContext) => void | Promise<void>;
   slow?: boolean;
@@ -204,13 +289,13 @@ export interface LegacyOutline<TContext, TResult, TRow extends TableRow> {
 export interface OutlineRunner {
   <TRow extends TableRow, TContext, TResult>(
     name: string,
-    table: TRow[],
+    table: readonly TRow[],
     phases: DocumentedOutline<TContext, TResult, TRow>,
   ): void;
   /** @deprecated Add descriptions to given/when/then tuples. */
   <TRow extends TableRow, TContext, TResult>(
     name: string,
-    table: TRow[],
+    table: readonly TRow[],
     phases: LegacyOutline<TContext, TResult, TRow>,
   ): void;
 }
@@ -226,65 +311,130 @@ export interface LevelRunner {
 function createLevelOutline(level: LevelConfig) {
   return function <TRow extends TableRow, TContext, TResult>(
     name: string,
-    table: TRow[],
+    table: readonly TRow[],
     phases: DocumentedOutline<TContext, TResult, TRow> | LegacyOutline<TContext, TResult, TRow>,
   ): void {
     requireDescription(name, `${level.name}.outline`);
+    if (!Array.isArray(table)) throw new Error(`${level.name}.outline table must be an array`);
     if (table.length === 0) throw new Error(`${level.name}.outline requires at least one row`);
-    const tupleFlags = [phases.given, phases.when, phases.then].map(Array.isArray);
+    if (!phases || typeof phases !== "object") {
+      throw new Error(`${level.name}.outline phases must be an object`);
+    }
+    const providedPhases = [phases.given, phases.when, phases.then]
+      .filter((phase) => phase !== undefined);
+    const tupleFlags = providedPhases.map(Array.isArray);
     if (tupleFlags.some(Boolean) && !tupleFlags.every(Boolean)) {
       throw new Error(`${level.name}.outline must describe all phases or use the legacy form for all phases`);
     }
     const documented = tupleFlags.every(Boolean);
     const documentedPhases = phases as DocumentedOutline<TContext, TResult, TRow>;
     const legacyPhases = phases as LegacyOutline<TContext, TResult, TRow>;
-    const given = documented ? documentedPhases.given[1] : legacyPhases.given;
-    const when = documented ? documentedPhases.when[1] : legacyPhases.when;
+    const given = documented ? documentedPhases.given?.[1] : legacyPhases.given;
+    const when = documented ? documentedPhases.when?.[1] : legacyPhases.when;
     const then = documented ? documentedPhases.then[1] : legacyPhases.then;
     const phaseDescriptions = documented
       ? {
-          given: documentedPhases.given[0],
-          when: documentedPhases.when[0],
+          given: documentedPhases.given?.[0],
+          when: documentedPhases.when?.[0],
           then: documentedPhases.then[0],
         }
-      : { given: "", when: "", then: "" };
+      : {
+          given: phases.given === undefined ? undefined : "",
+          when: phases.when === undefined ? undefined : "",
+          then: "",
+        };
     if (documented) {
-      requireDescription(phaseDescriptions.given, "given");
-      requireDescription(phaseDescriptions.when, "when");
-      requireDescription(phaseDescriptions.then, "then");
+      if (documentedPhases.given !== undefined) validatePhase(documentedPhases.given, "given");
+      if (documentedPhases.when !== undefined) validatePhase(documentedPhases.when, "when");
+      validatePhase(documentedPhases.then, "then");
+    } else {
+      if (given !== undefined && typeof given !== "function") {
+        throw new Error("given callback must be a function");
+      }
+      if (when !== undefined && typeof when !== "function") {
+        throw new Error("when callback must be a function");
+      }
+      if (typeof then !== "function") throw new Error("then callback must be a function");
+    }
+    if (phases.cleanup !== undefined && typeof phases.cleanup !== "function") {
+      throw new Error("cleanup callback must be a function");
+    }
+    if (phases.slow !== undefined && typeof phases.slow !== "boolean") {
+      throw new Error("slow must be a boolean");
+    }
+    const rowNames = new Set<string>();
+    for (const row of table) {
+      if (!row || typeof row !== "object") {
+        throw new Error(`${level.name}.outline rows must be objects`);
+      }
+      requireDescription(row.name, `${level.name}.outline row`);
+      if (rowNames.has(row.name)) {
+        throw new Error(`${level.name}.outline row names must be unique: "${row.name}"`);
+      }
+      rowNames.add(row.name);
     }
     describe(`[${level.name}] ${name}`, () => {
       for (const row of table) {
-        requireDescription(row.name, `${level.name}.outline row`);
+        const scenarioName = `${name} [${row.name}]`;
         const metadata: BddTestMetadata = {
           version: 1,
           level: level.name,
-          scenario: `${name} [${row.name}]`,
+          scenario: scenarioName,
           phases: phaseDescriptions,
           documented,
           outline: { name, row: row.name },
         };
         it(row.name, testOptions(level, metadata), async () => {
           const start = performance.now();
-          let phase = "given";
+          let phase: RuntimePhase = "given";
           let context: TContext = undefined as TContext;
+          let primaryFailure: Error | undefined;
 
           try {
-            context = await given(row);
+            if (given) context = await given(row);
             phase = "when";
-            const result = await when(context, row);
+            const result = when
+              ? await when(context, row)
+              : (context as unknown as TResult);
             phase = "then";
             await then(result, context, row);
           } catch (error) {
-            if (error instanceof Error && !error.message.startsWith("[")) {
-              error.message = `[${phase}] ${error.message}`;
-            }
-            throw error;
-          } finally {
-            if (phases.cleanup) {
+            const fallbackDescriptions = {
+              given: "setup",
+              when: "action",
+              then: "expectations",
+            } as const;
+            const description = documented
+              ? phaseDescriptions[phase as "given" | "when" | "then"]
+                ?? fallbackDescriptions[phase as "given" | "when" | "then"]
+              : fallbackDescriptions[phase as "given" | "when" | "then"];
+            primaryFailure = tagScenarioError(error, level, phase, scenarioName, description);
+          }
+
+          if (phases.cleanup) {
+            try {
               await phases.cleanup(context);
+            } catch (error) {
+              const cleanupFailure = tagScenarioError(
+                error,
+                level,
+                "cleanup",
+                scenarioName,
+                "cleanup completes",
+              );
+              if (primaryFailure) {
+                throw aggregateScenarioFailures(
+                  level,
+                  scenarioName,
+                  primaryFailure,
+                  cleanupFailure,
+                );
+              }
+              throw cleanupFailure;
             }
           }
+
+          if (primaryFailure) throw primaryFailure;
 
           const elapsed = performance.now() - start;
           const warnAt = level.warnAt ?? level.timeout * 0.5;

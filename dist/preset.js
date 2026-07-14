@@ -1,6 +1,6 @@
 import {
   bddContractReporter
-} from "./chunk-242T6635.js";
+} from "./chunk-ENAWRY6E.js";
 
 // src/preset.ts
 import { defineConfig } from "vitest/config";

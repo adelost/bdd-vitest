@@ -6,7 +6,7 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "https://github.com/adelost/bdd-vitest"
+    "url": "git+https://github.com/adelost/bdd-vitest.git"
   },
   "keywords": [
     "vitest",
@@ -18,44 +18,100 @@
   ],
   "exports": {
     ".": {
-      "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "import": {
+        "types": "./dist/index.d.ts",
+        "default": "./dist/index.js"
+      },
+      "require": {
+        "types": "./dist/index.d.cts",
+        "default": "./dist/index.cjs"
+      }
     },
     "./mock-ai": {
-      "import": "./dist/mock-ai.js",
-      "types": "./dist/mock-ai.d.ts"
+      "import": {
+        "types": "./dist/mock-ai.d.ts",
+        "default": "./dist/mock-ai.js"
+      },
+      "require": {
+        "types": "./dist/mock-ai.d.cts",
+        "default": "./dist/mock-ai.cjs"
+      }
     },
     "./service": {
-      "import": "./dist/service.js",
-      "types": "./dist/service.d.ts"
+      "import": {
+        "types": "./dist/service.d.ts",
+        "default": "./dist/service.js"
+      },
+      "require": {
+        "types": "./dist/service.d.cts",
+        "default": "./dist/service.cjs"
+      }
     },
     "./process": {
-      "import": "./dist/process.js",
-      "types": "./dist/process.d.ts"
+      "import": {
+        "types": "./dist/process.d.ts",
+        "default": "./dist/process.js"
+      },
+      "require": {
+        "types": "./dist/process.d.cts",
+        "default": "./dist/process.cjs"
+      }
     },
     "./levels": {
-      "import": "./dist/levels.js",
-      "types": "./dist/levels.d.ts"
+      "import": {
+        "types": "./dist/levels.d.ts",
+        "default": "./dist/levels.js"
+      },
+      "require": {
+        "types": "./dist/levels.d.cts",
+        "default": "./dist/levels.cjs"
+      }
     },
     "./mock-server": {
-      "import": "./dist/mock-server.js",
-      "types": "./dist/mock-server.d.ts"
+      "import": {
+        "types": "./dist/mock-server.d.ts",
+        "default": "./dist/mock-server.js"
+      },
+      "require": {
+        "types": "./dist/mock-server.d.cts",
+        "default": "./dist/mock-server.cjs"
+      }
     },
     "./mock-fetch": {
-      "import": "./dist/mock-fetch.js",
-      "types": "./dist/mock-fetch.d.ts"
+      "import": {
+        "types": "./dist/mock-fetch.d.ts",
+        "default": "./dist/mock-fetch.js"
+      },
+      "require": {
+        "types": "./dist/mock-fetch.d.cts",
+        "default": "./dist/mock-fetch.cjs"
+      }
     },
     "./preset": {
-      "import": "./dist/preset.js",
-      "types": "./dist/preset.d.ts"
+      "import": {
+        "types": "./dist/preset.d.ts",
+        "default": "./dist/preset.js"
+      },
+      "require": {
+        "types": "./dist/preset.d.cts",
+        "default": "./dist/preset.cjs"
+      }
     },
     "./contract": {
-      "import": "./dist/contract.js",
-      "types": "./dist/contract.d.ts"
+      "import": {
+        "types": "./dist/contract.d.ts",
+        "default": "./dist/contract.js"
+      },
+      "require": {
+        "types": "./dist/contract.d.cts",
+        "default": "./dist/contract.cjs"
+      }
     }
   },
-  "main": "./dist/index.js",
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "sideEffects": false,
   "files": [
     "dist",
     "README.md",

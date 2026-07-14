@@ -96,6 +96,29 @@ feature("outline()", () => {
       then:  ["the expected sum is returned", (result, _ctx, row) => expect(result).toBe(row.expected)],
     },
   );
+
+  unit.outline(
+    "supports rows without setup",
+    [{ name: "direct action", value: 21, expected: 42 }],
+    {
+      when: ["doubling the row value", (_ctx, row) => (row.value as number) * 2],
+      then: ["the expected result is returned", (result, _ctx, row) => {
+        expect(result).toBe(row.expected);
+      }],
+    },
+  );
+
+  unit.outline(
+    "supports rows without an action",
+    [{ name: "prepared value", value: 42 }],
+    {
+      given: ["the row value", (row) => row.value as number],
+      then: ["the prepared value is the result", (result, context) => {
+        expect(result).toBe(42);
+        expect(context).toBe(42);
+      }],
+    },
+  );
 });
 
 feature("outline() with cleanup", () => {
@@ -181,6 +204,52 @@ feature("empty description enforcement", () => {
     }],
     then: ["throws", (msg) => {
       expect(msg).toContain("feature requires a non-empty name");
+    }],
+  });
+
+  unit("rejects malformed phase callbacks before registration", {
+    when: ["calling unit with a non-callable then phase", () => {
+      try {
+        unit("valid name", { then: ["outcome", null] } as never);
+        return "no error";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }],
+    then: ["the callback contract is explicit", (msg) => {
+      expect(msg).toContain("then callback must be a function");
+    }],
+  });
+
+  unit("rejects duplicate outline row names", {
+    when: ["registering ambiguous documentation rows", () => {
+      try {
+        unit.outline("duplicate rows", [{ name: "same" }, { name: "same" }], {
+          given: ["a row", () => 1],
+          when: ["using it", (value) => value],
+          then: ["it is valid", () => {}],
+        });
+        return "no error";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }],
+    then: ["duplicate documentation identifiers are rejected", (msg) => {
+      expect(msg).toContain("row names must be unique");
+    }],
+  });
+
+  unit("rejects non-callable grouping callbacks", {
+    when: ["calling feature with an invalid callback", () => {
+      try {
+        feature("valid feature", null as never);
+        return "no error";
+      } catch (e) {
+        return (e as Error).message;
+      }
+    }],
+    then: ["the grouping contract is explicit", (msg) => {
+      expect(msg).toContain("feature callback must be a function");
     }],
   });
 });
