@@ -1,6 +1,6 @@
 import {
   bddContractReporter
-} from "./chunk-OBIARVBA.js";
+} from "./chunk-242T6635.js";
 export {
   bddContractReporter
 };

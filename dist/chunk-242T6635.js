@@ -50,7 +50,7 @@ function bddContractReporter(options = {}) {
   const policy = options.policy ?? "error";
   const requirePhaseDescriptions = options.requirePhaseDescriptions ?? true;
   const checkedModules = /* @__PURE__ */ new Set();
-  return {
+  const reporter = {
     onTestModuleCollected(module) {
       if (checkedModules.has(module.moduleId)) return;
       checkedModules.add(module.moduleId);
@@ -71,6 +71,7 @@ function bddContractReporter(options = {}) {
       }
     }
   };
+  return reporter;
 }
 
 export {

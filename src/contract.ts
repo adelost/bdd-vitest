@@ -100,7 +100,7 @@ export function bddContractReporter(options: BddContractOptions = {}): Reporter 
   const requirePhaseDescriptions = options.requirePhaseDescriptions ?? true;
   const checkedModules = new Set<string>();
 
-  return {
+  const reporter = {
     onTestModuleCollected(module: TestModule) {
       if (checkedModules.has(module.moduleId)) return;
       checkedModules.add(module.moduleId);
@@ -113,8 +113,8 @@ export function bddContractReporter(options: BddContractOptions = {}): Reporter 
         .filter((violation): violation is string => violation !== undefined);
       emitViolations(violations, policy);
     },
-    onCollected(files) {
-      for (const file of files as unknown as LegacyTask[]) {
+    onCollected(files: LegacyTask[]) {
+      for (const file of files) {
         const moduleId = (file as LegacyTask & { filepath?: string }).filepath;
         if (moduleId && checkedModules.has(moduleId)) continue;
         if (moduleId) checkedModules.add(moduleId);
@@ -125,4 +125,8 @@ export function bddContractReporter(options: BddContractOptions = {}): Reporter 
       }
     },
   };
+  // Vitest 2's Reporter type does not declare the modern hook, while Vitest
+  // 4 still executes the legacy hook for compatibility. Keep both at runtime
+  // and cast only at this version boundary.
+  return reporter as unknown as Reporter;
 }

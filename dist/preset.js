@@ -1,6 +1,6 @@
 import {
   bddContractReporter
-} from "./chunk-OBIARVBA.js";
+} from "./chunk-242T6635.js";
 
 // src/preset.ts
 import { defineConfig } from "vitest/config";

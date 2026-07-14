@@ -8,7 +8,7 @@
  *   });
  */
 
-import { defineConfig, type UserConfig } from "vitest/config";
+import { defineConfig, type ViteUserConfig } from "vitest/config";
 import { bddContractReporter, type BddContractOptions } from "./contract.js";
 
 /**
@@ -16,7 +16,7 @@ import { bddContractReporter, type BddContractOptions } from "./contract.js";
  * rejected by default; pass `{ policy: "warn" }` during a staged migration.
  */
 export function bddConfig(
-  overrides: UserConfig = {},
+  overrides: ViteUserConfig = {},
   contract: BddContractOptions = {},
 ) {
   const { test: testOverrides = {}, ...rootOverrides } = overrides;

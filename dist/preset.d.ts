@@ -1,12 +1,21 @@
-import * as vite from 'vite';
-import { UserConfig } from 'vitest/config';
+import { ViteUserConfig } from 'vitest/config';
 import { BddContractOptions } from './contract.js';
 import 'vitest/reporters';
+
+/**
+ * Vitest config preset for bdd-vitest projects.
+ *
+ * Usage in vitest.config.ts:
+ *   import { bddConfig } from "bdd-vitest/preset";
+ *   export default bddConfig({
+ *     // your overrides
+ *   });
+ */
 
 /**
  * Vitest config with BDD contracts enabled. Native `it`/`test` cases are
  * rejected by default; pass `{ policy: "warn" }` during a staged migration.
  */
-declare function bddConfig(overrides?: UserConfig, contract?: BddContractOptions): vite.UserConfig;
+declare function bddConfig(overrides?: ViteUserConfig, contract?: BddContractOptions): ViteUserConfig;
 
 export { bddConfig };
