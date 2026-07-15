@@ -3,6 +3,9 @@ import {
   bddContractReporter,
   resolveBddContractOptions
 } from "./chunk-2NHCFVU7.js";
+import {
+  bddRunReporter
+} from "./chunk-T7T4DBE5.js";
 
 // src/preset.ts
 import { createRequire } from "module";
@@ -18,8 +21,22 @@ function bddConfig(overrides = {}, contract = {}) {
   const configuredReporters = testOverrides.reporters === void 0 ? ["default"] : Array.isArray(testOverrides.reporters) ? testOverrides.reporters : [testOverrides.reporters];
   const configuredSetupFiles = testOverrides.setupFiles === void 0 ? [] : Array.isArray(testOverrides.setupFiles) ? testOverrides.setupFiles : [testOverrides.setupFiles];
   const resolvedContract = resolveBddContractOptions(contract);
+  const runReporter = process.env.BDD_REPORT_FILE?.trim() ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE }) : null;
+  const runReport = runReporter ? [runReporter] : [];
+  const runReporterPlugin = runReporter ? {
+    name: "bdd-vitest-run-reporter",
+    configureVitest({ vitest }) {
+      if (!vitest.config.reporters.includes(runReporter)) {
+        vitest.config.reporters.push(runReporter);
+      }
+    }
+  } : null;
   return defineConfig({
     ...rootOverrides,
+    plugins: [
+      ...rootOverrides.plugins ?? [],
+      ...runReporterPlugin ? [runReporterPlugin] : []
+    ],
     test: {
       // Sensible defaults for service-based tests
       testTimeout: 3e4,
@@ -29,7 +46,7 @@ function bddConfig(overrides = {}, contract = {}) {
         concurrent: false
       },
       ...testOverrides,
-      reporters: [...configuredReporters, bddContractReporter(contract)],
+      reporters: [...configuredReporters, ...runReport, bddContractReporter(contract)],
       setupFiles: [contractSetupFile(), ...configuredSetupFiles],
       provide: {
         ...testOverrides.provide,

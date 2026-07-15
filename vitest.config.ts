@@ -5,6 +5,8 @@ export default bddConfig({
     include: ["test/**/*.test.ts"],
     exclude: [
       "test/fixtures/reporter-override/**",
+      "test/fixtures/cross-harness/**",
+      "test/fixtures/run-report/**",
       "test/fixtures/service-signal/**",
     ],
   },

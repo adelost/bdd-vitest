@@ -67,6 +67,11 @@ silently disable the contract. JSON and custom reporters also receive the BDD
 metadata, so the descriptions are usable as generated test documentation. See
 [`CONTRACT.md`](./CONTRACT.md) for the exact invariants.
 
+Set `BDD_REPORT_FILE` in CI to emit the portable, versioned `bdd.run.v1` test
+catalog and run result. The same contract is emitted by bdd-pytest, including
+the four levels, scenario phases, status, duration, retries, and flaky state.
+See [`BDD_RUN_REPORT.md`](./BDD_RUN_REPORT.md) for the schema and privacy rules.
+
 ### Migrating from 2.x
 
 Version 3 makes the level and documentation gates errors by default. Existing
