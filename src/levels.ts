@@ -62,8 +62,12 @@ function validateScenario<TContext, TResult>(
 // --- Level config ---
 
 export interface LevelConfig {
-  /** Max time per scenario (ms) */
+  /** Max time or measured work per scenario (ms) */
   timeout: number;
+  /** Outer wall-clock watchdog. Defaults to timeout. */
+  wallTimeout?: number;
+  /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */
+  budgetClock?: "wall" | "thread-work";
   /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
   warnAt?: number;
   /** Level name for error messages */
@@ -93,12 +97,24 @@ function scenarioMetadata<TContext, TResult>(
 function testOptions(level: LevelConfig, metadata: BddTestMetadata): { timeout: number } {
   // `meta` is supported by Vitest's collector but is not exposed on TestOptions
   // in every supported Vitest type version.
-  return { timeout: level.timeout, meta: { bdd: metadata } } as { timeout: number };
+  return {
+    timeout: level.wallTimeout ?? level.timeout,
+    meta: { bdd: metadata },
+  } as { timeout: number };
 }
 
+const COMPONENT_TIMEOUT_MS = 5_000;
+
 const LEVELS = {
-  unit:        { timeout: 100,     warnAt: 50,     name: "unit",        nextLevel: "component" },
-  component:   { timeout: 5_000,   warnAt: 2_000,  name: "component",   nextLevel: "integration" },
+  unit: {
+    timeout: 100,
+    wallTimeout: COMPONENT_TIMEOUT_MS,
+    budgetClock: "thread-work",
+    warnAt: 50,
+    name: "unit",
+    nextLevel: "component",
+  },
+  component:   { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2_000, name: "component", nextLevel: "integration" },
   integration: { timeout: 30_000,  warnAt: 15_000, name: "integration", nextLevel: "e2e" },
   e2e:         { timeout: 120_000, warnAt: 60_000, name: "e2e" },
 } as const;
@@ -115,6 +131,75 @@ export interface LevelScenario<TContext, TResult> {
 }
 
 type RuntimePhase = "given" | "when" | "then" | "cleanup";
+
+interface ScenarioTiming {
+  wallStartedAt: number;
+  threadCpuStartedAt: ReturnType<typeof process.threadCpuUsage>;
+  explicitAsyncWaitMs: number;
+}
+
+function startScenarioTiming(): ScenarioTiming {
+  return {
+    wallStartedAt: performance.now(),
+    threadCpuStartedAt: process.threadCpuUsage(),
+    explicitAsyncWaitMs: 0,
+  };
+}
+
+function threadCpuMs(startedAt: ReturnType<typeof process.threadCpuUsage>): number {
+  const elapsed = process.threadCpuUsage(startedAt);
+  return (elapsed.user + elapsed.system) / 1_000;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" && value !== null) || typeof value === "function"
+  ) && typeof (value as { then?: unknown }).then === "function";
+}
+
+async function runPhase<T>(timing: ScenarioTiming, callback: () => T | Promise<T>): Promise<T> {
+  const wallStartedAt = performance.now();
+  const threadCpuStartedAt = process.threadCpuUsage();
+  const result = callback();
+  if (!isPromiseLike(result)) return result;
+
+  try {
+    return await result;
+  } finally {
+    // Promise-returning phases opt into non-CPU waits as semantic work. Scheduler
+    // gaps around synchronous phases remain outside the unit work budget.
+    const wallMs = performance.now() - wallStartedAt;
+    const cpuMs = threadCpuMs(threadCpuStartedAt);
+    timing.explicitAsyncWaitMs += Math.max(0, wallMs - cpuMs);
+  }
+}
+
+function finishScenarioTiming(
+  level: LevelConfig,
+  name: string,
+  timing: ScenarioTiming,
+  slow: boolean | undefined,
+): void {
+  const wallMs = performance.now() - timing.wallStartedAt;
+  const elapsed = level.budgetClock === "thread-work"
+    ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs
+    : wallMs;
+
+  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+    throw new Error(
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`,
+    );
+  }
+
+  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  if (!slow && elapsed > warnAt) {
+    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
+    const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
+    console.warn(
+      `⚠️  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
+    );
+  }
+}
 
 function phaseDescription<TContext, TResult>(
   phases: LevelScenario<TContext, TResult>,
@@ -163,21 +248,22 @@ async function executeScenario<TContext, TResult>(
   level: LevelConfig,
 ): Promise<void> {
   validateScenario(phases);
-  const start = performance.now();
+  const timing = startScenarioTiming();
   let phase: RuntimePhase = "given";
   let context: TContext = undefined as TContext;
   let primaryFailure: Error | undefined;
 
   try {
-    if (phases.given && typeof phases.given !== "string") {
-      context = await phases.given[1]();
+    const given = phases.given;
+    if (given && typeof given !== "string") {
+      context = await runPhase(timing, () => given[1]());
     }
     phase = "when";
     const result = phases.when
-      ? await phases.when[1](context)
+      ? await runPhase(timing, () => phases.when![1](context))
       : (context as unknown as TResult);
     phase = "then";
-    await phases.then[1](result, context);
+    await runPhase(timing, () => phases.then[1](result, context));
   } catch (error) {
     primaryFailure = tagScenarioError(
       error,
@@ -190,7 +276,7 @@ async function executeScenario<TContext, TResult>(
 
   if (phases.cleanup) {
     try {
-      await phases.cleanup(context);
+      await runPhase(timing, () => phases.cleanup!(context));
     } catch (error) {
       const cleanupFailure = tagScenarioError(
         error,
@@ -207,15 +293,7 @@ async function executeScenario<TContext, TResult>(
   }
 
   if (primaryFailure) throw primaryFailure;
-
-  const elapsed = performance.now() - start;
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
-  if (!phases.slow && elapsed > warnAt) {
-    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-    console.warn(
-      `⚠️  [${level.name}] "${name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
-    );
-  }
+  finishScenarioTiming(level, name, timing, phases.slow);
 }
 
 function createLevelRunner(level: LevelConfig) {
@@ -385,19 +463,19 @@ function createLevelOutline(level: LevelConfig) {
           outline: { name, row: row.name },
         };
         it(row.name, testOptions(level, metadata), async () => {
-          const start = performance.now();
+          const timing = startScenarioTiming();
           let phase: RuntimePhase = "given";
           let context: TContext = undefined as TContext;
           let primaryFailure: Error | undefined;
 
           try {
-            if (given) context = await given(row);
+            if (given) context = await runPhase(timing, () => given(row));
             phase = "when";
             const result = when
-              ? await when(context, row)
+              ? await runPhase(timing, () => when(context, row))
               : (context as unknown as TResult);
             phase = "then";
-            await then(result, context, row);
+            await runPhase(timing, () => then(result, context, row));
           } catch (error) {
             const fallbackDescriptions = {
               given: "setup",
@@ -413,7 +491,7 @@ function createLevelOutline(level: LevelConfig) {
 
           if (phases.cleanup) {
             try {
-              await phases.cleanup(context);
+              await runPhase(timing, () => phases.cleanup!(context));
             } catch (error) {
               const cleanupFailure = tagScenarioError(
                 error,
@@ -435,15 +513,7 @@ function createLevelOutline(level: LevelConfig) {
           }
 
           if (primaryFailure) throw primaryFailure;
-
-          const elapsed = performance.now() - start;
-          const warnAt = level.warnAt ?? level.timeout * 0.5;
-          if (!phases.slow && elapsed > warnAt) {
-            const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-            console.warn(
-              `⚠️  [${level.name}] "${row.name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
-            );
-          }
+          finishScenarioTiming(level, row.name, timing, phases.slow);
         });
       }
     });

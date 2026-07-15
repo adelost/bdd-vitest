@@ -48,14 +48,69 @@ function scenarioMetadata(level, name, phases) {
   };
 }
 function testOptions(level, metadata) {
-  return { timeout: level.timeout, meta: { bdd: metadata } };
+  return {
+    timeout: level.wallTimeout ?? level.timeout,
+    meta: { bdd: metadata }
+  };
 }
+var COMPONENT_TIMEOUT_MS = 5e3;
 var LEVELS = {
-  unit: { timeout: 100, warnAt: 50, name: "unit", nextLevel: "component" },
-  component: { timeout: 5e3, warnAt: 2e3, name: "component", nextLevel: "integration" },
+  unit: {
+    timeout: 100,
+    wallTimeout: COMPONENT_TIMEOUT_MS,
+    budgetClock: "thread-work",
+    warnAt: 50,
+    name: "unit",
+    nextLevel: "component"
+  },
+  component: { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2e3, name: "component", nextLevel: "integration" },
   integration: { timeout: 3e4, warnAt: 15e3, name: "integration", nextLevel: "e2e" },
   e2e: { timeout: 12e4, warnAt: 6e4, name: "e2e" }
 };
+function startScenarioTiming() {
+  return {
+    wallStartedAt: performance.now(),
+    threadCpuStartedAt: process.threadCpuUsage(),
+    explicitAsyncWaitMs: 0
+  };
+}
+function threadCpuMs(startedAt) {
+  const elapsed = process.threadCpuUsage(startedAt);
+  return (elapsed.user + elapsed.system) / 1e3;
+}
+function isPromiseLike(value) {
+  return (typeof value === "object" && value !== null || typeof value === "function") && typeof value.then === "function";
+}
+async function runPhase(timing, callback) {
+  const wallStartedAt = performance.now();
+  const threadCpuStartedAt = process.threadCpuUsage();
+  const result = callback();
+  if (!isPromiseLike(result)) return result;
+  try {
+    return await result;
+  } finally {
+    const wallMs = performance.now() - wallStartedAt;
+    const cpuMs = threadCpuMs(threadCpuStartedAt);
+    timing.explicitAsyncWaitMs += Math.max(0, wallMs - cpuMs);
+  }
+}
+function finishScenarioTiming(level, name, timing, slow) {
+  const wallMs = performance.now() - timing.wallStartedAt;
+  const elapsed = level.budgetClock === "thread-work" ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs : wallMs;
+  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+    throw new Error(
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`
+    );
+  }
+  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  if (!slow && elapsed > warnAt) {
+    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
+    const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
+    console.warn(
+      `\u26A0\uFE0F  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
+    );
+  }
+}
 function phaseDescription(phases, phase) {
   if (phase === "given") {
     return typeof phases.given === "string" ? phases.given : phases.given?.[0] ?? "setup";
@@ -82,18 +137,19 @@ function aggregateScenarioFailures(level, scenario, primary, cleanup) {
 }
 async function executeScenario(name, phases, level) {
   validateScenario(phases);
-  const start = performance.now();
+  const timing = startScenarioTiming();
   let phase = "given";
   let context = void 0;
   let primaryFailure;
   try {
-    if (phases.given && typeof phases.given !== "string") {
-      context = await phases.given[1]();
+    const given = phases.given;
+    if (given && typeof given !== "string") {
+      context = await runPhase(timing, () => given[1]());
     }
     phase = "when";
-    const result = phases.when ? await phases.when[1](context) : context;
+    const result = phases.when ? await runPhase(timing, () => phases.when[1](context)) : context;
     phase = "then";
-    await phases.then[1](result, context);
+    await runPhase(timing, () => phases.then[1](result, context));
   } catch (error) {
     primaryFailure = tagScenarioError(
       error,
@@ -105,7 +161,7 @@ async function executeScenario(name, phases, level) {
   }
   if (phases.cleanup) {
     try {
-      await phases.cleanup(context);
+      await runPhase(timing, () => phases.cleanup(context));
     } catch (error) {
       const cleanupFailure = tagScenarioError(
         error,
@@ -121,14 +177,7 @@ async function executeScenario(name, phases, level) {
     }
   }
   if (primaryFailure) throw primaryFailure;
-  const elapsed = performance.now() - start;
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
-  if (!phases.slow && elapsed > warnAt) {
-    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-    console.warn(
-      `\u26A0\uFE0F  [${level.name}] "${name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
-    );
-  }
+  finishScenarioTiming(level, name, timing, phases.slow);
 }
 function createLevelRunner(level) {
   function run(name, phases) {
@@ -226,16 +275,16 @@ function createLevelOutline(level) {
           outline: { name, row: row.name }
         };
         it(row.name, testOptions(level, metadata), async () => {
-          const start = performance.now();
+          const timing = startScenarioTiming();
           let phase = "given";
           let context = void 0;
           let primaryFailure;
           try {
-            if (given) context = await given(row);
+            if (given) context = await runPhase(timing, () => given(row));
             phase = "when";
-            const result = when ? await when(context, row) : context;
+            const result = when ? await runPhase(timing, () => when(context, row)) : context;
             phase = "then";
-            await then(result, context, row);
+            await runPhase(timing, () => then(result, context, row));
           } catch (error) {
             const fallbackDescriptions = {
               given: "setup",
@@ -247,7 +296,7 @@ function createLevelOutline(level) {
           }
           if (phases.cleanup) {
             try {
-              await phases.cleanup(context);
+              await runPhase(timing, () => phases.cleanup(context));
             } catch (error) {
               const cleanupFailure = tagScenarioError(
                 error,
@@ -268,14 +317,7 @@ function createLevelOutline(level) {
             }
           }
           if (primaryFailure) throw primaryFailure;
-          const elapsed = performance.now() - start;
-          const warnAt = level.warnAt ?? level.timeout * 0.5;
-          if (!phases.slow && elapsed > warnAt) {
-            const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-            console.warn(
-              `\u26A0\uFE0F  [${level.name}] "${row.name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
-            );
-          }
+          finishScenarioTiming(level, row.name, timing, phases.slow);
         });
       }
     });

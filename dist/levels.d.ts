@@ -20,8 +20,12 @@ import 'vitest/reporters';
 /** Phase: [description, function] tuple — description is enforced */
 type Phase<TFn> = readonly [desc: string, fn: TFn];
 interface LevelConfig {
-    /** Max time per scenario (ms) */
+    /** Max time or measured work per scenario (ms) */
     timeout: number;
+    /** Outer wall-clock watchdog. Defaults to timeout. */
+    wallTimeout?: number;
+    /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */
+    budgetClock?: "wall" | "thread-work";
     /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
     warnAt?: number;
     /** Level name for error messages */
