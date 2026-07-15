@@ -117,6 +117,8 @@ feature("runtime contract gates", () => {
       expect(report.tests.every(({ file }) =>
         file === "test/fixtures/run-report/catalog.test.ts")).toBe(true);
       expect(report.tests.every(({ id }) => /^sha256:[0-9a-f]{64}$/u.test(id))).toBe(true);
+      expect(report.tests.every(({ retryCount, flaky }) =>
+        retryCount === 0 && flaky === false)).toBe(true);
       expect(report.tests.map(({ level, documentation, status }) => ({
         level,
         documentation,
@@ -167,8 +169,41 @@ feature("runtime contract gates", () => {
         `${error.instancePath} ${error.message}`).join("\n")).toBe(true);
       expect(report.run.status).toBe("failed");
       expect(report.summary).toEqual({ total: 3, passed: 1, failed: 1, skipped: 1, pending: 0 });
-      expect(report.tests.find(({ status }) => status === "failed")?.level).toBe("unit");
+      expect(report.tests.find(({ status }) => status === "failed")).toMatchObject({
+        level: "unit",
+        retryCount: 1,
+        flaky: false,
+      });
       expect(rawReport).not.toContain("SENSITIVE_FAILURE_DETAIL");
+    }],
+    cleanup: (directory) => rmSync(directory, { recursive: true, force: true }),
+  });
+
+  component("derives flaky from a final pass after retry", {
+    given: ["an isolated report destination", () => mkdtempSync(join(tmpdir(), "bdd-run-"))],
+    when: ["running a scenario that succeeds on retry", (directory) => {
+      const outputFile = join(directory, "run.json");
+      const result = runVitest([
+        "--root",
+        "test/fixtures/run-report",
+      ], {
+        BDD_REPORT_FILE: outputFile,
+        BDD_REPORT_FLAKY: "1",
+      });
+      return {
+        directory,
+        report: JSON.parse(readFileSync(outputFile, "utf8")) as BddRunReport,
+        result,
+      };
+    }],
+    then: ["the final pass is marked flaky consistently", ({ report, result }) => {
+      expect(result.status).toBe(0);
+      expect(report.run.status).toBe("passed");
+      expect(report.tests.find(({ retryCount }) => retryCount > 0)).toMatchObject({
+        status: "passed",
+        retryCount: 1,
+        flaky: true,
+      });
     }],
     cleanup: (directory) => rmSync(directory, { recursive: true, force: true }),
   });

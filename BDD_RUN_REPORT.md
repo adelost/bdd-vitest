@@ -22,8 +22,15 @@ scenario phases, status, duration, retries, and flaky state.
   access-controlled artifacts.
 - Test IDs are deterministic within a framework. Consumers must not infer
   meaning from the ID or expect Vitest and pytest IDs to be equal.
+- `flaky` has one framework-neutral definition: `retryCount > 0` and the final
+  status is `passed`. A test that still fails after retries is not marked flaky.
 - Timestamps and durations describe the particular execution and are not part
-  of semantic cross-harness equivalence.
+  of semantic cross-harness equivalence. pytest includes setup, call, teardown,
+  and every retry; Vitest reports its framework diagnostic duration. Compare
+  trends within one framework, not absolute timing across frameworks.
+- pytest can use a test-function docstring as documentation, while bdd-vitest's
+  level runner always emits a structured scenario. This is why `docstring` is a
+  valid documentation source even though Vitest itself never produces it.
 
 ## Emitting a report
 

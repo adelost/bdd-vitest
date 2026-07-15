@@ -18,4 +18,14 @@ feature("checkout", () => {
       then: ["the assertion fails", () => expect("SENSITIVE_FAILURE_DETAIL").toBe("hidden")],
     });
   }
+
+  if (process.env.BDD_REPORT_FLAKY === "1") {
+    let attempts = 0;
+    unit("derives flaky from a passing retry", {
+      then: ["the retry succeeds", () => {
+        attempts += 1;
+        expect(attempts).toBe(2);
+      }],
+    });
+  }
 });

@@ -145,6 +145,7 @@ const reportTest = (
   const diagnostic = task.diagnostic?.();
   const durationMs = numberValue(diagnostic?.duration ?? result?.duration);
   const retryCount = numberValue(diagnostic?.retryCount ?? result?.retryCount);
+  const status = statusValue(result?.state, task.options?.mode ?? task.mode);
   const scenario = metadata
     ? [{
         name: metadata.scenario,
@@ -163,10 +164,10 @@ const reportTest = (
     level: metadata?.level ?? null,
     documentation: metadata?.documented ? "scenario" : "missing",
     scenarios: scenario,
-    status: statusValue(result?.state, task.options?.mode ?? task.mode),
+    status,
     durationMs,
     retryCount,
-    flaky: diagnostic?.flaky === true || result?.flaky === true,
+    flaky: retryCount > 0 && status === "passed",
   };
 };
 

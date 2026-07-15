@@ -37,6 +37,8 @@ const semanticRun = (report) => ({
     documentation: test.documentation,
     scenarios: test.scenarios,
     status: test.status,
+    retryCount: test.retryCount,
+    flaky: test.flaky,
   })),
 });
 
