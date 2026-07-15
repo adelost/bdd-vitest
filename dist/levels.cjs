@@ -26,6 +26,7 @@ __export(levels_exports, {
   unit: () => unit
 });
 module.exports = __toCommonJS(levels_exports);
+var import_node_fs = require("fs");
 var import_vitest = require("vitest");
 function requireDescription(value, label) {
   if (typeof value !== "string" || !value.trim()) {
@@ -94,23 +95,59 @@ var LEVELS = {
   integration: { timeout: 3e4, warnAt: 15e3, name: "integration", nextLevel: "e2e" },
   e2e: { timeout: 12e4, warnAt: 6e4, name: "e2e" }
 };
+function schedstatCpuMicros() {
+  const cpuNanoseconds = (0, import_node_fs.readFileSync)("/proc/thread-self/schedstat", "utf8").trim().split(/\s+/, 1)[0];
+  if (!cpuNanoseconds) throw new Error("Linux thread schedstat has no CPU-time field");
+  return Number(BigInt(cpuNanoseconds) / 1000n);
+}
+function createCpuClock() {
+  const nativeThreadCpuUsage = Reflect.get(process, "threadCpuUsage");
+  if (typeof nativeThreadCpuUsage === "function") {
+    return {
+      kind: "native",
+      nowMicros: () => {
+        const elapsed = nativeThreadCpuUsage();
+        return elapsed.user + elapsed.system;
+      }
+    };
+  }
+  if (process.platform === "linux") {
+    try {
+      schedstatCpuMicros();
+      return { kind: "schedstat", nowMicros: schedstatCpuMicros };
+    } catch {
+    }
+  }
+  return {
+    kind: "process-cpu-degraded",
+    nowMicros: () => {
+      const elapsed = process.cpuUsage();
+      return elapsed.user + elapsed.system;
+    }
+  };
+}
+var UNIT_CPU_CLOCK = createCpuClock();
+if (UNIT_CPU_CLOCK.kind === "process-cpu-degraded") {
+  console.warn(
+    "\u26A0\uFE0F  [bdd-vitest] unit work clock: process-cpu-degraded; current-thread CPU is unavailable, so other threads can be conservatively overcounted"
+  );
+}
 function startScenarioTiming() {
   return {
     wallStartedAt: performance.now(),
-    threadCpuStartedAt: process.threadCpuUsage(),
+    threadCpuStartedAt: UNIT_CPU_CLOCK.nowMicros(),
     explicitAsyncWaitMs: 0
   };
 }
 function threadCpuMs(startedAt) {
-  const elapsed = process.threadCpuUsage(startedAt);
-  return (elapsed.user + elapsed.system) / 1e3;
+  return Math.max(0, UNIT_CPU_CLOCK.nowMicros() - startedAt) / 1e3;
 }
 function isPromiseLike(value) {
   return (typeof value === "object" && value !== null || typeof value === "function") && typeof value.then === "function";
 }
 async function runPhase(timing, callback) {
   const wallStartedAt = performance.now();
-  const threadCpuStartedAt = process.threadCpuUsage();
+  const threadCpuStartedAt = UNIT_CPU_CLOCK.nowMicros();
   const result = callback();
   if (!isPromiseLike(result)) return result;
   try {
@@ -223,6 +260,10 @@ function createLevelRunner(level) {
     validateScenario(phases);
     import_vitest.it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () => executeScenario(name, phases, level));
   };
+  Object.defineProperty(run, "workClock", {
+    value: level.budgetClock === "thread-work" ? UNIT_CPU_CLOCK.kind : "wall",
+    enumerable: true
+  });
   return run;
 }
 function createLevelGroup(level) {

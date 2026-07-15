@@ -14,6 +14,7 @@
  *   });
  */
 
+import { readFileSync } from "node:fs";
 import { describe, it } from "vitest";
 import type { BddTestMetadata } from "./contract.js";
 
@@ -132,23 +133,77 @@ export interface LevelScenario<TContext, TResult> {
 
 type RuntimePhase = "given" | "when" | "then" | "cleanup";
 
+export type UnitWorkClock = "native" | "schedstat" | "process-cpu-degraded";
+
+interface CpuClock {
+  kind: UnitWorkClock;
+  nowMicros: () => number;
+}
+
+function schedstatCpuMicros(): number {
+  const cpuNanoseconds = readFileSync("/proc/thread-self/schedstat", "utf8")
+    .trim()
+    .split(/\s+/, 1)[0];
+  if (!cpuNanoseconds) throw new Error("Linux thread schedstat has no CPU-time field");
+  return Number(BigInt(cpuNanoseconds) / 1_000n);
+}
+
+function createCpuClock(): CpuClock {
+  const nativeThreadCpuUsage = Reflect.get(process, "threadCpuUsage") as
+    | (() => ReturnType<typeof process.cpuUsage>)
+    | undefined;
+  if (typeof nativeThreadCpuUsage === "function") {
+    return {
+      kind: "native",
+      nowMicros: () => {
+        const elapsed = nativeThreadCpuUsage();
+        return elapsed.user + elapsed.system;
+      },
+    };
+  }
+
+  if (process.platform === "linux") {
+    try {
+      schedstatCpuMicros();
+      return { kind: "schedstat", nowMicros: schedstatCpuMicros };
+    } catch {
+      // The degraded clock below stays conservative and announces itself.
+    }
+  }
+
+  return {
+    kind: "process-cpu-degraded",
+    nowMicros: () => {
+      const elapsed = process.cpuUsage();
+      return elapsed.user + elapsed.system;
+    },
+  };
+}
+
+const UNIT_CPU_CLOCK = createCpuClock();
+
+if (UNIT_CPU_CLOCK.kind === "process-cpu-degraded") {
+  console.warn(
+    "⚠️  [bdd-vitest] unit work clock: process-cpu-degraded; current-thread CPU is unavailable, so other threads can be conservatively overcounted",
+  );
+}
+
 interface ScenarioTiming {
   wallStartedAt: number;
-  threadCpuStartedAt: ReturnType<typeof process.threadCpuUsage>;
+  threadCpuStartedAt: number;
   explicitAsyncWaitMs: number;
 }
 
 function startScenarioTiming(): ScenarioTiming {
   return {
     wallStartedAt: performance.now(),
-    threadCpuStartedAt: process.threadCpuUsage(),
+    threadCpuStartedAt: UNIT_CPU_CLOCK.nowMicros(),
     explicitAsyncWaitMs: 0,
   };
 }
 
-function threadCpuMs(startedAt: ReturnType<typeof process.threadCpuUsage>): number {
-  const elapsed = process.threadCpuUsage(startedAt);
-  return (elapsed.user + elapsed.system) / 1_000;
+function threadCpuMs(startedAt: number): number {
+  return Math.max(0, UNIT_CPU_CLOCK.nowMicros() - startedAt) / 1_000;
 }
 
 function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
@@ -159,7 +214,7 @@ function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
 
 async function runPhase<T>(timing: ScenarioTiming, callback: () => T | Promise<T>): Promise<T> {
   const wallStartedAt = performance.now();
-  const threadCpuStartedAt = process.threadCpuUsage();
+  const threadCpuStartedAt = UNIT_CPU_CLOCK.nowMicros();
   const result = callback();
   if (!isPromiseLike(result)) return result;
 
@@ -327,6 +382,11 @@ function createLevelRunner(level: LevelConfig) {
       executeScenario(name, phases, level));
   };
 
+  Object.defineProperty(run, "workClock", {
+    value: level.budgetClock === "thread-work" ? UNIT_CPU_CLOCK.kind : "wall",
+    enumerable: true,
+  });
+
   return run;
 }
 
@@ -380,6 +440,8 @@ export interface OutlineRunner {
 
 export interface LevelRunner {
   <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
+  /** Runtime audit of the clock enforcing this level's budget. */
+  readonly workClock: UnitWorkClock | "wall";
   skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   group: (name: string, fn: () => void) => void;
