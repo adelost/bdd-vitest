@@ -20,8 +20,12 @@ import 'vitest/reporters';
 /** Phase: [description, function] tuple — description is enforced */
 type Phase<TFn> = readonly [desc: string, fn: TFn];
 interface LevelConfig {
-    /** Max time per scenario (ms) */
+    /** Max time or measured work per scenario (ms) */
     timeout: number;
+    /** Outer wall-clock watchdog. Defaults to timeout. */
+    wallTimeout?: number;
+    /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */
+    budgetClock?: "wall" | "thread-work";
     /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
     warnAt?: number;
     /** Level name for error messages */
@@ -37,6 +41,7 @@ interface LevelScenario<TContext, TResult> {
     /** Suppress slow-test warning. Use when you know the test is intentionally slow for its level. */
     slow?: boolean;
 }
+type UnitWorkClock = "native" | "schedstat" | "process-cpu-degraded";
 interface TableRow {
     name: string;
     [key: string]: unknown;
@@ -63,6 +68,8 @@ interface OutlineRunner {
 }
 interface LevelRunner {
     <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
+    /** Runtime audit of the clock enforcing this level's budget. */
+    readonly workClock: UnitWorkClock | "wall";
     skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
     only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
     group: (name: string, fn: () => void) => void;
@@ -77,4 +84,4 @@ declare const integration: LevelRunner;
 /** Full system, browser, network. <120s. */
 declare const e2e: LevelRunner;
 
-export { type DocumentedOutline, type LegacyOutline, type LevelConfig, type LevelRunner, type LevelScenario, type OutlineRunner, type Phase, type TableRow, component, e2e, integration, unit };
+export { type DocumentedOutline, type LegacyOutline, type LevelConfig, type LevelRunner, type LevelScenario, type OutlineRunner, type Phase, type TableRow, type UnitWorkClock, component, e2e, integration, unit };

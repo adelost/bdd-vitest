@@ -26,6 +26,7 @@ __export(levels_exports, {
   unit: () => unit
 });
 module.exports = __toCommonJS(levels_exports);
+var import_node_fs = require("fs");
 var import_vitest = require("vitest");
 function requireDescription(value, label) {
   if (typeof value !== "string" || !value.trim()) {
@@ -75,14 +76,105 @@ function scenarioMetadata(level, name, phases) {
   };
 }
 function testOptions(level, metadata) {
-  return { timeout: level.timeout, meta: { bdd: metadata } };
+  return {
+    timeout: level.wallTimeout ?? level.timeout,
+    meta: { bdd: metadata }
+  };
 }
+var COMPONENT_TIMEOUT_MS = 5e3;
 var LEVELS = {
-  unit: { timeout: 100, warnAt: 50, name: "unit", nextLevel: "component" },
-  component: { timeout: 5e3, warnAt: 2e3, name: "component", nextLevel: "integration" },
+  unit: {
+    timeout: 100,
+    wallTimeout: COMPONENT_TIMEOUT_MS,
+    budgetClock: "thread-work",
+    warnAt: 50,
+    name: "unit",
+    nextLevel: "component"
+  },
+  component: { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2e3, name: "component", nextLevel: "integration" },
   integration: { timeout: 3e4, warnAt: 15e3, name: "integration", nextLevel: "e2e" },
   e2e: { timeout: 12e4, warnAt: 6e4, name: "e2e" }
 };
+function schedstatCpuMicros() {
+  const cpuNanoseconds = (0, import_node_fs.readFileSync)("/proc/thread-self/schedstat", "utf8").trim().split(/\s+/, 1)[0];
+  if (!cpuNanoseconds) throw new Error("Linux thread schedstat has no CPU-time field");
+  return Number(BigInt(cpuNanoseconds) / 1000n);
+}
+function createCpuClock() {
+  const nativeThreadCpuUsage = Reflect.get(process, "threadCpuUsage");
+  if (typeof nativeThreadCpuUsage === "function") {
+    return {
+      kind: "native",
+      nowMicros: () => {
+        const elapsed = nativeThreadCpuUsage();
+        return elapsed.user + elapsed.system;
+      }
+    };
+  }
+  if (process.platform === "linux") {
+    try {
+      schedstatCpuMicros();
+      return { kind: "schedstat", nowMicros: schedstatCpuMicros };
+    } catch {
+    }
+  }
+  return {
+    kind: "process-cpu-degraded",
+    nowMicros: () => {
+      const elapsed = process.cpuUsage();
+      return elapsed.user + elapsed.system;
+    }
+  };
+}
+var UNIT_CPU_CLOCK = createCpuClock();
+if (UNIT_CPU_CLOCK.kind === "process-cpu-degraded") {
+  console.warn(
+    "\u26A0\uFE0F  [bdd-vitest] unit work clock: process-cpu-degraded; current-thread CPU is unavailable, so other threads can be conservatively overcounted"
+  );
+}
+function startScenarioTiming() {
+  return {
+    wallStartedAt: performance.now(),
+    threadCpuStartedAt: UNIT_CPU_CLOCK.nowMicros(),
+    explicitAsyncWaitMs: 0
+  };
+}
+function threadCpuMs(startedAt) {
+  return Math.max(0, UNIT_CPU_CLOCK.nowMicros() - startedAt) / 1e3;
+}
+function isPromiseLike(value) {
+  return (typeof value === "object" && value !== null || typeof value === "function") && typeof value.then === "function";
+}
+async function runPhase(timing, callback) {
+  const wallStartedAt = performance.now();
+  const threadCpuStartedAt = UNIT_CPU_CLOCK.nowMicros();
+  const result = callback();
+  if (!isPromiseLike(result)) return result;
+  try {
+    return await result;
+  } finally {
+    const wallMs = performance.now() - wallStartedAt;
+    const cpuMs = threadCpuMs(threadCpuStartedAt);
+    timing.explicitAsyncWaitMs += Math.max(0, wallMs - cpuMs);
+  }
+}
+function finishScenarioTiming(level, name, timing, slow) {
+  const wallMs = performance.now() - timing.wallStartedAt;
+  const elapsed = level.budgetClock === "thread-work" ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs : wallMs;
+  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+    throw new Error(
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`
+    );
+  }
+  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  if (!slow && elapsed > warnAt) {
+    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
+    const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
+    console.warn(
+      `\u26A0\uFE0F  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
+    );
+  }
+}
 function phaseDescription(phases, phase) {
   if (phase === "given") {
     return typeof phases.given === "string" ? phases.given : phases.given?.[0] ?? "setup";
@@ -109,18 +201,19 @@ function aggregateScenarioFailures(level, scenario, primary, cleanup) {
 }
 async function executeScenario(name, phases, level) {
   validateScenario(phases);
-  const start = performance.now();
+  const timing = startScenarioTiming();
   let phase = "given";
   let context = void 0;
   let primaryFailure;
   try {
-    if (phases.given && typeof phases.given !== "string") {
-      context = await phases.given[1]();
+    const given = phases.given;
+    if (given && typeof given !== "string") {
+      context = await runPhase(timing, () => given[1]());
     }
     phase = "when";
-    const result = phases.when ? await phases.when[1](context) : context;
+    const result = phases.when ? await runPhase(timing, () => phases.when[1](context)) : context;
     phase = "then";
-    await phases.then[1](result, context);
+    await runPhase(timing, () => phases.then[1](result, context));
   } catch (error) {
     primaryFailure = tagScenarioError(
       error,
@@ -132,7 +225,7 @@ async function executeScenario(name, phases, level) {
   }
   if (phases.cleanup) {
     try {
-      await phases.cleanup(context);
+      await runPhase(timing, () => phases.cleanup(context));
     } catch (error) {
       const cleanupFailure = tagScenarioError(
         error,
@@ -148,14 +241,7 @@ async function executeScenario(name, phases, level) {
     }
   }
   if (primaryFailure) throw primaryFailure;
-  const elapsed = performance.now() - start;
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
-  if (!phases.slow && elapsed > warnAt) {
-    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-    console.warn(
-      `\u26A0\uFE0F  [${level.name}] "${name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
-    );
-  }
+  finishScenarioTiming(level, name, timing, phases.slow);
 }
 function createLevelRunner(level) {
   function run(name, phases) {
@@ -174,6 +260,10 @@ function createLevelRunner(level) {
     validateScenario(phases);
     import_vitest.it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () => executeScenario(name, phases, level));
   };
+  Object.defineProperty(run, "workClock", {
+    value: level.budgetClock === "thread-work" ? UNIT_CPU_CLOCK.kind : "wall",
+    enumerable: true
+  });
   return run;
 }
 function createLevelGroup(level) {
@@ -253,16 +343,16 @@ function createLevelOutline(level) {
           outline: { name, row: row.name }
         };
         (0, import_vitest.it)(row.name, testOptions(level, metadata), async () => {
-          const start = performance.now();
+          const timing = startScenarioTiming();
           let phase = "given";
           let context = void 0;
           let primaryFailure;
           try {
-            if (given) context = await given(row);
+            if (given) context = await runPhase(timing, () => given(row));
             phase = "when";
-            const result = when ? await when(context, row) : context;
+            const result = when ? await runPhase(timing, () => when(context, row)) : context;
             phase = "then";
-            await then(result, context, row);
+            await runPhase(timing, () => then(result, context, row));
           } catch (error) {
             const fallbackDescriptions = {
               given: "setup",
@@ -274,7 +364,7 @@ function createLevelOutline(level) {
           }
           if (phases.cleanup) {
             try {
-              await phases.cleanup(context);
+              await runPhase(timing, () => phases.cleanup(context));
             } catch (error) {
               const cleanupFailure = tagScenarioError(
                 error,
@@ -295,14 +385,7 @@ function createLevelOutline(level) {
             }
           }
           if (primaryFailure) throw primaryFailure;
-          const elapsed = performance.now() - start;
-          const warnAt = level.warnAt ?? level.timeout * 0.5;
-          if (!phases.slow && elapsed > warnAt) {
-            const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-            console.warn(
-              `\u26A0\uFE0F  [${level.name}] "${row.name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
-            );
-          }
+          finishScenarioTiming(level, row.name, timing, phases.slow);
         });
       }
     });

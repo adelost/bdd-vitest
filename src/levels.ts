@@ -14,6 +14,7 @@
  *   });
  */
 
+import { readFileSync } from "node:fs";
 import { describe, it } from "vitest";
 import type { BddTestMetadata } from "./contract.js";
 
@@ -62,8 +63,12 @@ function validateScenario<TContext, TResult>(
 // --- Level config ---
 
 export interface LevelConfig {
-  /** Max time per scenario (ms) */
+  /** Max time or measured work per scenario (ms) */
   timeout: number;
+  /** Outer wall-clock watchdog. Defaults to timeout. */
+  wallTimeout?: number;
+  /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */
+  budgetClock?: "wall" | "thread-work";
   /** Warn if test takes longer than this (ms). Default: 50% of timeout. */
   warnAt?: number;
   /** Level name for error messages */
@@ -93,12 +98,24 @@ function scenarioMetadata<TContext, TResult>(
 function testOptions(level: LevelConfig, metadata: BddTestMetadata): { timeout: number } {
   // `meta` is supported by Vitest's collector but is not exposed on TestOptions
   // in every supported Vitest type version.
-  return { timeout: level.timeout, meta: { bdd: metadata } } as { timeout: number };
+  return {
+    timeout: level.wallTimeout ?? level.timeout,
+    meta: { bdd: metadata },
+  } as { timeout: number };
 }
 
+const COMPONENT_TIMEOUT_MS = 5_000;
+
 const LEVELS = {
-  unit:        { timeout: 100,     warnAt: 50,     name: "unit",        nextLevel: "component" },
-  component:   { timeout: 5_000,   warnAt: 2_000,  name: "component",   nextLevel: "integration" },
+  unit: {
+    timeout: 100,
+    wallTimeout: COMPONENT_TIMEOUT_MS,
+    budgetClock: "thread-work",
+    warnAt: 50,
+    name: "unit",
+    nextLevel: "component",
+  },
+  component:   { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2_000, name: "component", nextLevel: "integration" },
   integration: { timeout: 30_000,  warnAt: 15_000, name: "integration", nextLevel: "e2e" },
   e2e:         { timeout: 120_000, warnAt: 60_000, name: "e2e" },
 } as const;
@@ -115,6 +132,129 @@ export interface LevelScenario<TContext, TResult> {
 }
 
 type RuntimePhase = "given" | "when" | "then" | "cleanup";
+
+export type UnitWorkClock = "native" | "schedstat" | "process-cpu-degraded";
+
+interface CpuClock {
+  kind: UnitWorkClock;
+  nowMicros: () => number;
+}
+
+function schedstatCpuMicros(): number {
+  const cpuNanoseconds = readFileSync("/proc/thread-self/schedstat", "utf8")
+    .trim()
+    .split(/\s+/, 1)[0];
+  if (!cpuNanoseconds) throw new Error("Linux thread schedstat has no CPU-time field");
+  return Number(BigInt(cpuNanoseconds) / 1_000n);
+}
+
+function createCpuClock(): CpuClock {
+  const nativeThreadCpuUsage = Reflect.get(process, "threadCpuUsage") as
+    | (() => ReturnType<typeof process.cpuUsage>)
+    | undefined;
+  if (typeof nativeThreadCpuUsage === "function") {
+    return {
+      kind: "native",
+      nowMicros: () => {
+        const elapsed = nativeThreadCpuUsage();
+        return elapsed.user + elapsed.system;
+      },
+    };
+  }
+
+  if (process.platform === "linux") {
+    try {
+      schedstatCpuMicros();
+      return { kind: "schedstat", nowMicros: schedstatCpuMicros };
+    } catch {
+      // The degraded clock below stays conservative and announces itself.
+    }
+  }
+
+  return {
+    kind: "process-cpu-degraded",
+    nowMicros: () => {
+      const elapsed = process.cpuUsage();
+      return elapsed.user + elapsed.system;
+    },
+  };
+}
+
+const UNIT_CPU_CLOCK = createCpuClock();
+
+if (UNIT_CPU_CLOCK.kind === "process-cpu-degraded") {
+  console.warn(
+    "⚠️  [bdd-vitest] unit work clock: process-cpu-degraded; current-thread CPU is unavailable, so other threads can be conservatively overcounted",
+  );
+}
+
+interface ScenarioTiming {
+  wallStartedAt: number;
+  threadCpuStartedAt: number;
+  explicitAsyncWaitMs: number;
+}
+
+function startScenarioTiming(): ScenarioTiming {
+  return {
+    wallStartedAt: performance.now(),
+    threadCpuStartedAt: UNIT_CPU_CLOCK.nowMicros(),
+    explicitAsyncWaitMs: 0,
+  };
+}
+
+function threadCpuMs(startedAt: number): number {
+  return Math.max(0, UNIT_CPU_CLOCK.nowMicros() - startedAt) / 1_000;
+}
+
+function isPromiseLike(value: unknown): value is PromiseLike<unknown> {
+  return (
+    (typeof value === "object" && value !== null) || typeof value === "function"
+  ) && typeof (value as { then?: unknown }).then === "function";
+}
+
+async function runPhase<T>(timing: ScenarioTiming, callback: () => T | Promise<T>): Promise<T> {
+  const wallStartedAt = performance.now();
+  const threadCpuStartedAt = UNIT_CPU_CLOCK.nowMicros();
+  const result = callback();
+  if (!isPromiseLike(result)) return result;
+
+  try {
+    return await result;
+  } finally {
+    // Promise-returning phases opt into non-CPU waits as semantic work. Scheduler
+    // gaps around synchronous phases remain outside the unit work budget.
+    const wallMs = performance.now() - wallStartedAt;
+    const cpuMs = threadCpuMs(threadCpuStartedAt);
+    timing.explicitAsyncWaitMs += Math.max(0, wallMs - cpuMs);
+  }
+}
+
+function finishScenarioTiming(
+  level: LevelConfig,
+  name: string,
+  timing: ScenarioTiming,
+  slow: boolean | undefined,
+): void {
+  const wallMs = performance.now() - timing.wallStartedAt;
+  const elapsed = level.budgetClock === "thread-work"
+    ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs
+    : wallMs;
+
+  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+    throw new Error(
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`,
+    );
+  }
+
+  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  if (!slow && elapsed > warnAt) {
+    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
+    const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
+    console.warn(
+      `⚠️  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
+    );
+  }
+}
 
 function phaseDescription<TContext, TResult>(
   phases: LevelScenario<TContext, TResult>,
@@ -163,21 +303,22 @@ async function executeScenario<TContext, TResult>(
   level: LevelConfig,
 ): Promise<void> {
   validateScenario(phases);
-  const start = performance.now();
+  const timing = startScenarioTiming();
   let phase: RuntimePhase = "given";
   let context: TContext = undefined as TContext;
   let primaryFailure: Error | undefined;
 
   try {
-    if (phases.given && typeof phases.given !== "string") {
-      context = await phases.given[1]();
+    const given = phases.given;
+    if (given && typeof given !== "string") {
+      context = await runPhase(timing, () => given[1]());
     }
     phase = "when";
     const result = phases.when
-      ? await phases.when[1](context)
+      ? await runPhase(timing, () => phases.when![1](context))
       : (context as unknown as TResult);
     phase = "then";
-    await phases.then[1](result, context);
+    await runPhase(timing, () => phases.then[1](result, context));
   } catch (error) {
     primaryFailure = tagScenarioError(
       error,
@@ -190,7 +331,7 @@ async function executeScenario<TContext, TResult>(
 
   if (phases.cleanup) {
     try {
-      await phases.cleanup(context);
+      await runPhase(timing, () => phases.cleanup!(context));
     } catch (error) {
       const cleanupFailure = tagScenarioError(
         error,
@@ -207,15 +348,7 @@ async function executeScenario<TContext, TResult>(
   }
 
   if (primaryFailure) throw primaryFailure;
-
-  const elapsed = performance.now() - start;
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
-  if (!phases.slow && elapsed > warnAt) {
-    const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-    console.warn(
-      `⚠️  [${level.name}] "${name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
-    );
-  }
+  finishScenarioTiming(level, name, timing, phases.slow);
 }
 
 function createLevelRunner(level: LevelConfig) {
@@ -248,6 +381,11 @@ function createLevelRunner(level: LevelConfig) {
     it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
       executeScenario(name, phases, level));
   };
+
+  Object.defineProperty(run, "workClock", {
+    value: level.budgetClock === "thread-work" ? UNIT_CPU_CLOCK.kind : "wall",
+    enumerable: true,
+  });
 
   return run;
 }
@@ -302,6 +440,8 @@ export interface OutlineRunner {
 
 export interface LevelRunner {
   <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>): void;
+  /** Runtime audit of the clock enforcing this level's budget. */
+  readonly workClock: UnitWorkClock | "wall";
   skip: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   only: <TContext, TResult>(name: string, phases: LevelScenario<TContext, TResult>) => void;
   group: (name: string, fn: () => void) => void;
@@ -385,19 +525,19 @@ function createLevelOutline(level: LevelConfig) {
           outline: { name, row: row.name },
         };
         it(row.name, testOptions(level, metadata), async () => {
-          const start = performance.now();
+          const timing = startScenarioTiming();
           let phase: RuntimePhase = "given";
           let context: TContext = undefined as TContext;
           let primaryFailure: Error | undefined;
 
           try {
-            if (given) context = await given(row);
+            if (given) context = await runPhase(timing, () => given(row));
             phase = "when";
             const result = when
-              ? await when(context, row)
+              ? await runPhase(timing, () => when(context, row))
               : (context as unknown as TResult);
             phase = "then";
-            await then(result, context, row);
+            await runPhase(timing, () => then(result, context, row));
           } catch (error) {
             const fallbackDescriptions = {
               given: "setup",
@@ -413,7 +553,7 @@ function createLevelOutline(level: LevelConfig) {
 
           if (phases.cleanup) {
             try {
-              await phases.cleanup(context);
+              await runPhase(timing, () => phases.cleanup!(context));
             } catch (error) {
               const cleanupFailure = tagScenarioError(
                 error,
@@ -435,15 +575,7 @@ function createLevelOutline(level: LevelConfig) {
           }
 
           if (primaryFailure) throw primaryFailure;
-
-          const elapsed = performance.now() - start;
-          const warnAt = level.warnAt ?? level.timeout * 0.5;
-          if (!phases.slow && elapsed > warnAt) {
-            const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
-            console.warn(
-              `⚠️  [${level.name}] "${row.name}" took ${Math.round(elapsed)}ms (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
-            );
-          }
+          finishScenarioTiming(level, row.name, timing, phases.slow);
         });
       }
     });
