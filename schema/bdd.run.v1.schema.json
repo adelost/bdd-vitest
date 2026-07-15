@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/adelost/bdd-vitest/main/schema/bdd.run.v1.schema.json",
+  "title": "BDD run report v1",
+  "description": "Portable, framework-neutral catalog and result report for one BDD test run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "run", "summary", "tests"],
+  "properties": {
+    "schemaVersion": { "const": "bdd.run.v1" },
+    "run": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "framework",
+        "frameworkVersion",
+        "project",
+        "repository",
+        "commitSha",
+        "branch",
+        "startedAt",
+        "finishedAt",
+        "durationMs",
+        "status"
+      ],
+      "properties": {
+        "framework": { "type": "string", "minLength": 1 },
+        "frameworkVersion": { "type": ["string", "null"], "minLength": 1 },
+        "project": { "type": ["string", "null"], "minLength": 1 },
+        "repository": { "type": ["string", "null"], "minLength": 1 },
+        "commitSha": { "type": ["string", "null"], "minLength": 1 },
+        "branch": { "type": ["string", "null"], "minLength": 1 },
+        "startedAt": { "type": "string", "format": "date-time" },
+        "finishedAt": { "type": "string", "format": "date-time" },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "status": { "enum": ["passed", "failed", "interrupted"] }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["total", "passed", "failed", "skipped", "pending"],
+      "properties": {
+        "total": { "type": "integer", "minimum": 0 },
+        "passed": { "type": "integer", "minimum": 0 },
+        "failed": { "type": "integer", "minimum": 0 },
+        "skipped": { "type": "integer", "minimum": 0 },
+        "pending": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "tests": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/test" }
+    }
+  },
+  "$defs": {
+    "phases": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["then"],
+      "properties": {
+        "given": { "type": "string", "minLength": 1 },
+        "when": { "type": "string", "minLength": 1 },
+        "then": { "type": "string", "minLength": 1 }
+      }
+    },
+    "outline": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "row"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "row": { "type": "string", "minLength": 1 }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "phases", "documented"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "phases": { "$ref": "#/$defs/phases" },
+        "documented": { "type": "boolean" },
+        "outline": { "$ref": "#/$defs/outline" }
+      }
+    },
+    "test": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "name",
+        "fullName",
+        "file",
+        "line",
+        "level",
+        "documentation",
+        "scenarios",
+        "status",
+        "durationMs",
+        "retryCount",
+        "flaky"
+      ],
+      "properties": {
+        "id": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+        "name": { "type": "string", "minLength": 1 },
+        "fullName": { "type": "string", "minLength": 1 },
+        "file": {
+          "type": "string",
+          "minLength": 1,
+          "not": { "pattern": "^(?:/|[A-Za-z]:[\\\\/])" }
+        },
+        "line": { "type": ["integer", "null"], "minimum": 1 },
+        "level": {
+          "type": ["string", "null"],
+          "enum": ["unit", "component", "integration", "e2e", null]
+        },
+        "documentation": { "enum": ["scenario", "docstring", "missing"] },
+        "scenarios": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/scenario" }
+        },
+        "status": { "enum": ["passed", "failed", "skipped", "pending"] },
+        "durationMs": { "type": "number", "minimum": 0 },
+        "retryCount": { "type": "integer", "minimum": 0 },
+        "flaky": { "type": "boolean" }
+      }
+    }
+  }
+}

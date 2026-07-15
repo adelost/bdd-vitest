@@ -106,7 +106,18 @@
         "types": "./dist/contract.d.cts",
         "default": "./dist/contract.cjs"
       }
-    }
+    },
+    "./report": {
+      "import": {
+        "types": "./dist/report.d.ts",
+        "default": "./dist/report.js"
+      },
+      "require": {
+        "types": "./dist/report.d.cts",
+        "default": "./dist/report.cjs"
+      }
+    },
+    "./schema/bdd.run.v1.json": "./schema/bdd.run.v1.schema.json"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
@@ -118,6 +129,8 @@
     "dist",
     "README.md",
     "CONTRACT.md",
+    "BDD_RUN_REPORT.md",
+    "schema",
     "LICENSE"
   ],
   "engines": {
@@ -128,6 +141,8 @@
   },
   "devDependencies": {
     "@types/node": "^25.2.1",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
     "tsup": "^8.0.0",
     "typescript": "^5.0.0",
     "vitest": "^3.0.0"
@@ -135,6 +150,7 @@
   "scripts": {
     "build": "tsup",
     "test": "vitest run",
+    "test:cross-harness": "node scripts/cross-harness.mjs",
     "test:watch": "vitest",
     "prepublishOnly": "pnpm build && pnpm test && npm pack --dry-run"
   },

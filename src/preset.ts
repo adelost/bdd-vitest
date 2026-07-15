@@ -17,6 +17,7 @@ import {
   resolveBddContractOptions,
   type BddContractOptions,
 } from "./contract.js";
+import { bddRunReporter } from "./report.js";
 
 function contractSetupFile(): string {
   const projectRequire = createRequire(resolve(process.cwd(), "__bdd-vitest-resolver.cjs"));
@@ -44,9 +45,30 @@ export function bddConfig(
       ? testOverrides.setupFiles
       : [testOverrides.setupFiles];
   const resolvedContract = resolveBddContractOptions(contract);
+  const runReporter = process.env.BDD_REPORT_FILE?.trim()
+    ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE })
+    : null;
+  const runReport = runReporter ? [runReporter] : [];
+  const runReporterPlugin = runReporter
+    ? {
+        name: "bdd-vitest-run-reporter",
+        configureVitest({ vitest }: { vitest: { config: { reporters: unknown[] } } }) {
+          // Vitest applies CLI --reporter after config merging. configureVitest
+          // runs afterwards, immediately before reporter construction, so an
+          // explicitly requested artifact cannot be silently disabled.
+          if (!vitest.config.reporters.includes(runReporter)) {
+            vitest.config.reporters.push(runReporter);
+          }
+        },
+      }
+    : null;
 
   return defineConfig({
     ...rootOverrides,
+    plugins: [
+      ...(rootOverrides.plugins ?? []),
+      ...(runReporterPlugin ? [runReporterPlugin] : []),
+    ],
     test: {
       // Sensible defaults for service-based tests
       testTimeout: 30_000,
@@ -56,7 +78,7 @@ export function bddConfig(
         concurrent: false,
       },
       ...testOverrides,
-      reporters: [...configuredReporters, bddContractReporter(contract)],
+      reporters: [...configuredReporters, ...runReport, bddContractReporter(contract)],
       setupFiles: [contractSetupFile(), ...configuredSetupFiles],
       provide: {
         ...testOverrides.provide,

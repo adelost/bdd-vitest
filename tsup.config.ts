@@ -12,6 +12,7 @@ export default defineConfig({
     preset: "src/preset.ts",
     contract: "src/contract.ts",
     "contract-setup": "src/contract-setup.ts",
+    report: "src/report.ts",
   },
   format: ["esm", "cjs"],
   outExtension({ format }) {
