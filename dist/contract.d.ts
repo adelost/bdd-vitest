@@ -11,6 +11,13 @@ interface BddContractOptions {
     /** @deprecated Use documentationPolicy (false maps to off). */
     requirePhaseDescriptions?: boolean;
 }
+interface ResolvedBddContractOptions {
+    levelPolicy: BddContractPolicy;
+    documentationPolicy: BddContractPolicy;
+    requirePhaseDescriptions: boolean;
+}
+/** Internal Vitest provided-context key shared by the preset and setup gate. */
+declare const BDD_CONTRACT_CONTEXT_KEY = "bdd-vitest.contract.v1";
 interface BddTestMetadata {
     version: 1;
     level: "unit" | "component" | "integration" | "e2e";
@@ -26,6 +33,14 @@ interface BddTestMetadata {
         row: string;
     };
 }
+interface ContractViolation {
+    kind: "level" | "documentation";
+    message: string;
+}
+declare function metadataViolations(name: string, meta: Record<string, unknown> | undefined, requirePhaseDescriptions: boolean): ContractViolation[];
+declare function resolveBddContractOptions(options?: BddContractOptions): ResolvedBddContractOptions;
+/** Enforce violations from the worker-side setup hook. */
+declare function enforceRuntimeViolations(violations: ContractViolation[], options: ResolvedBddContractOptions): void;
 /**
  * Reporter enforcing that every collected test carries metadata written by a
  * BDD level runner. Supports the modern Vitest reporter API and Vitest 2's
@@ -33,4 +48,4 @@ interface BddTestMetadata {
  */
 declare function bddContractReporter(options?: BddContractOptions): Reporter;
 
-export { type BddContractOptions, type BddContractPolicy, type BddTestMetadata, bddContractReporter };
+export { BDD_CONTRACT_CONTEXT_KEY, type BddContractOptions, type BddContractPolicy, type BddTestMetadata, type ContractViolation, type ResolvedBddContractOptions, bddContractReporter, enforceRuntimeViolations, metadataViolations, resolveBddContractOptions };

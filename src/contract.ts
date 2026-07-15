@@ -14,6 +14,15 @@ export interface BddContractOptions {
   requirePhaseDescriptions?: boolean;
 }
 
+export interface ResolvedBddContractOptions {
+  levelPolicy: BddContractPolicy;
+  documentationPolicy: BddContractPolicy;
+  requirePhaseDescriptions: boolean;
+}
+
+/** Internal Vitest provided-context key shared by the preset and setup gate. */
+export const BDD_CONTRACT_CONTEXT_KEY = "bdd-vitest.contract.v1";
+
 export interface BddTestMetadata {
   version: 1;
   level: "unit" | "component" | "integration" | "e2e";
@@ -37,7 +46,7 @@ interface LegacyTask {
   tasks?: LegacyTask[];
 }
 
-interface ContractViolation {
+export interface ContractViolation {
   kind: "level" | "documentation";
   message: string;
 }
@@ -50,7 +59,7 @@ function documentationViolation(message: string): ContractViolation {
   return { kind: "documentation", message };
 }
 
-function metadataViolations(
+export function metadataViolations(
   name: string,
   meta: Record<string, unknown> | undefined,
   requirePhaseDescriptions: boolean,
@@ -114,6 +123,48 @@ function validatePolicy(value: unknown, label: string): BddContractPolicy {
   throw new Error(`${label} must be one of: off, warn, error`);
 }
 
+export function resolveBddContractOptions(
+  options: BddContractOptions = {},
+): ResolvedBddContractOptions {
+  const levelPolicy = validatePolicy(
+    options.levelPolicy ?? options.policy ?? "error",
+    "levelPolicy",
+  );
+  const documentationPolicy = validatePolicy(
+    options.documentationPolicy
+      ?? (options.requirePhaseDescriptions === false ? "off" : "error"),
+    "documentationPolicy",
+  );
+  return {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions: documentationPolicy !== "off",
+  };
+}
+
+function formatViolations(violations: string[]): string {
+  return [
+    "bdd-vitest contract violations:",
+    ...violations.map((violation) => `- ${violation}`),
+  ].join("\n");
+}
+
+/** Enforce violations from the worker-side setup hook. */
+export function enforceRuntimeViolations(
+  violations: ContractViolation[],
+  options: ResolvedBddContractOptions,
+): void {
+  const warnings = violations
+    .filter(({ kind }) => options[`${kind}Policy`] === "warn")
+    .map(({ message }) => message);
+  const errors = violations
+    .filter(({ kind }) => options[`${kind}Policy`] === "error")
+    .map(({ message }) => message);
+
+  if (warnings.length > 0) console.warn(formatViolations(warnings));
+  if (errors.length > 0) throw new Error(formatViolations(errors));
+}
+
 function collectLegacyTests(task: LegacyTask): LegacyTask[] {
   const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
   return task.type === "test" ? [task, ...children] : children;
@@ -125,16 +176,11 @@ function collectLegacyTests(task: LegacyTask): LegacyTask[] {
  * legacy `onCollected` hook.
  */
 export function bddContractReporter(options: BddContractOptions = {}): Reporter {
-  const levelPolicy = validatePolicy(
-    options.levelPolicy ?? options.policy ?? "error",
-    "levelPolicy",
-  );
-  const documentationPolicy = validatePolicy(
-    options.documentationPolicy
-      ?? (options.requirePhaseDescriptions === false ? "off" : "error"),
-    "documentationPolicy",
-  );
-  const requirePhaseDescriptions = documentationPolicy !== "off";
+  const {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions,
+  } = resolveBddContractOptions(options);
   const checkedModules = new Set<string>();
 
   const report = (violations: ContractViolation[]) => {

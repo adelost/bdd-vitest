@@ -57,19 +57,17 @@ integration.group("multi-step", () => {
   });
 });
 
-// --- unit timeout enforcement ---
+// --- unit timeout budget ---
 
-import { it as vitestIt } from "vitest";
-
-vitestIt("unit rejects slow tests", async () => {
-  // We can't easily test vitest timeout from inside vitest,
-  // so we verify the timeout is set correctly by checking
-  // that unit-level scenarios get the right config
-  const timeout = 100; // unit timeout
-  const start = performance.now();
-  await new Promise(r => setTimeout(r, 50)); // under limit = ok
-  const elapsed = performance.now() - start;
-  expect(elapsed).toBeLessThan(timeout);
+unit("allows short work within the unit timeout", {
+  when: ["running a short asynchronous operation", async () => {
+    const start = performance.now();
+    await new Promise(r => setTimeout(r, 10));
+    return performance.now() - start;
+  }],
+  then: ["the operation remains below the 100ms unit budget", (elapsed) => {
+    expect(elapsed).toBeLessThan(100);
+  }],
 });
 
 // --- e2e ---

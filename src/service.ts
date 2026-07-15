@@ -44,6 +44,14 @@ function killAll() {
 }
 
 process.on("exit", killAll);
+process.once("SIGINT", () => {
+  killAll();
+  process.exit(130);
+});
+process.once("SIGTERM", () => {
+  killAll();
+  process.exit(143);
+});
 
 // --- Service definition (declarative) ---
 
@@ -126,10 +134,10 @@ export async function startService(
 
   // Check requirements before starting
   if (requires?.minRamMb !== undefined) {
-    const availableRamMb = Math.round(totalmem() / 1024 / 1024);
-    if (availableRamMb < requires.minRamMb) {
+    const hostRamMb = Math.round(totalmem() / 1024 / 1024);
+    if (hostRamMb < requires.minRamMb) {
       throw new Error(
-        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${availableRamMb}MB`,
+        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${hostRamMb}MB`,
       );
     }
   }

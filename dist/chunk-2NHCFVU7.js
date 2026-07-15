@@ -1,4 +1,5 @@
 // src/contract.ts
+var BDD_CONTRACT_CONTEXT_KEY = "bdd-vitest.contract.v1";
 function levelViolation(message) {
   return { kind: "level", message };
 }
@@ -59,11 +60,7 @@ function validatePolicy(value, label) {
   if (value === "off" || value === "warn" || value === "error") return value;
   throw new Error(`${label} must be one of: off, warn, error`);
 }
-function collectLegacyTests(task) {
-  const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
-  return task.type === "test" ? [task, ...children] : children;
-}
-function bddContractReporter(options = {}) {
+function resolveBddContractOptions(options = {}) {
   const levelPolicy = validatePolicy(
     options.levelPolicy ?? options.policy ?? "error",
     "levelPolicy"
@@ -72,7 +69,34 @@ function bddContractReporter(options = {}) {
     options.documentationPolicy ?? (options.requirePhaseDescriptions === false ? "off" : "error"),
     "documentationPolicy"
   );
-  const requirePhaseDescriptions = documentationPolicy !== "off";
+  return {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions: documentationPolicy !== "off"
+  };
+}
+function formatViolations(violations) {
+  return [
+    "bdd-vitest contract violations:",
+    ...violations.map((violation) => `- ${violation}`)
+  ].join("\n");
+}
+function enforceRuntimeViolations(violations, options) {
+  const warnings = violations.filter(({ kind }) => options[`${kind}Policy`] === "warn").map(({ message }) => message);
+  const errors = violations.filter(({ kind }) => options[`${kind}Policy`] === "error").map(({ message }) => message);
+  if (warnings.length > 0) console.warn(formatViolations(warnings));
+  if (errors.length > 0) throw new Error(formatViolations(errors));
+}
+function collectLegacyTests(task) {
+  const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
+  return task.type === "test" ? [task, ...children] : children;
+}
+function bddContractReporter(options = {}) {
+  const {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions
+  } = resolveBddContractOptions(options);
   const checkedModules = /* @__PURE__ */ new Set();
   const report = (violations) => {
     emitViolations(
@@ -113,5 +137,9 @@ function bddContractReporter(options = {}) {
 }
 
 export {
+  BDD_CONTRACT_CONTEXT_KEY,
+  metadataViolations,
+  resolveBddContractOptions,
+  enforceRuntimeViolations,
   bddContractReporter
 };

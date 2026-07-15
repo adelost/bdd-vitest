@@ -25,7 +25,13 @@ jobs:
           node-version: ${{ matrix.node }}
           cache: pnpm
       - run: pnpm install --frozen-lockfile
-      - run: pnpm add --save-dev --lockfile=false vitest@${{ matrix.vitest }}
+      - name: Install test framework version
+        run: |
+          if [[ "${{ matrix.vitest }}" == 4.* ]]; then
+            pnpm add --save-dev --lockfile=false "vitest@${{ matrix.vitest }}" "vite@7.3.6"
+          else
+            pnpm add --save-dev --lockfile=false "vitest@${{ matrix.vitest }}"
+          fi
       - run: pnpm test
       - run: pnpm build
       - run: npm pack --dry-run
@@ -38,4 +44,9 @@ jobs:
           cd "$consumer"
           npm init -y
           npm install "$GITHUB_WORKSPACE/$package" "vitest@${{ matrix.vitest }}"
-          npx vitest run
+          npx vitest run --reporter=dot
+          cp "$GITHUB_WORKSPACE/test/fixtures/reporter-override/native.test.ts" .
+          if npx vitest run --reporter=dot; then
+            echo "Native test bypassed the installed package contract" >&2
+            exit 1
+          fi

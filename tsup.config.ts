@@ -11,6 +11,7 @@ export default defineConfig({
     process: "src/process.ts",
     preset: "src/preset.ts",
     contract: "src/contract.ts",
+    "contract-setup": "src/contract-setup.ts",
   },
   format: ["esm", "cjs"],
   outExtension({ format }) {

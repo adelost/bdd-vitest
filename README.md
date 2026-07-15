@@ -61,9 +61,18 @@ export default bddConfig({}, {
 
 Both policies accept `off`, `warn`, or `error`; the preset defaults both to
 `error`. This matches bdd-pytest's contract vocabulary while allowing level
-and documentation migrations to advance independently. JSON and custom
-reporters also receive the BDD metadata, so the descriptions are usable as generated test documentation. See
+and documentation migrations to advance independently. The enforcement hook is
+independent of Vitest reporters, so CI commands such as `--reporter=json` cannot
+silently disable the contract. JSON and custom reporters also receive the BDD
+metadata, so the descriptions are usable as generated test documentation. See
 [`CONTRACT.md`](./CONTRACT.md) for the exact invariants.
+
+### Migrating from 2.x
+
+Version 3 makes the level and documentation gates errors by default. Existing
+mixed suites can upgrade without a flag day by starting with both policies on
+`warn`, migrating native tests to level runners, and ratcheting each policy to
+`error` independently.
 
 ## Levels
 
@@ -289,9 +298,9 @@ feature("Ship AI", () => {
       { name: "engineer: denied",  clearance: 1, expected: false },
       { name: "commander: granted", clearance: 9, expected: true },
     ], {
-      given: (row) => ({ crew: "Kai", clearance: row.clearance as number }),
-      when:  (ctx) => shipAI.evaluateRequest(ctx),
-      then:  (res, _ctx, row) => expect(res.granted).toBe(row.expected),
+      given: ["the row clearance", (row) => ({ crew: "Kai", clearance: row.clearance as number })],
+      when:  ["evaluating access", (ctx) => shipAI.evaluateRequest(ctx)],
+      then:  ["the expected decision is returned", (res, _ctx, row) => expect(res.granted).toBe(row.expected)],
     });
   });
 

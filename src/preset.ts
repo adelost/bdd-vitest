@@ -8,8 +8,21 @@
  *   });
  */
 
+import { createRequire } from "node:module";
+import { dirname, resolve } from "node:path";
 import { defineConfig, type ViteUserConfig } from "vitest/config";
-import { bddContractReporter, type BddContractOptions } from "./contract.js";
+import {
+  BDD_CONTRACT_CONTEXT_KEY,
+  bddContractReporter,
+  resolveBddContractOptions,
+  type BddContractOptions,
+} from "./contract.js";
+
+function contractSetupFile(): string {
+  const projectRequire = createRequire(resolve(process.cwd(), "__bdd-vitest-resolver.cjs"));
+  const presetFile = projectRequire.resolve("bdd-vitest/preset");
+  return resolve(dirname(presetFile), "contract-setup.js");
+}
 
 /**
  * Vitest config with BDD contracts enabled. Native `it`/`test` cases are
@@ -25,6 +38,12 @@ export function bddConfig(
     : Array.isArray(testOverrides.reporters)
       ? testOverrides.reporters
       : [testOverrides.reporters];
+  const configuredSetupFiles = testOverrides.setupFiles === undefined
+    ? []
+    : Array.isArray(testOverrides.setupFiles)
+      ? testOverrides.setupFiles
+      : [testOverrides.setupFiles];
+  const resolvedContract = resolveBddContractOptions(contract);
 
   return defineConfig({
     ...rootOverrides,
@@ -38,6 +57,11 @@ export function bddConfig(
       },
       ...testOverrides,
       reporters: [...configuredReporters, bddContractReporter(contract)],
+      setupFiles: [contractSetupFile(), ...configuredSetupFiles],
+      provide: {
+        ...testOverrides.provide,
+        [BDD_CONTRACT_CONTEXT_KEY]: resolvedContract,
+      },
     },
   });
 }

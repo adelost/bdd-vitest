@@ -23,9 +23,12 @@ __export(preset_exports, {
   bddConfig: () => bddConfig
 });
 module.exports = __toCommonJS(preset_exports);
+var import_node_module = require("module");
+var import_node_path = require("path");
 var import_config = require("vitest/config");
 
 // src/contract.ts
+var BDD_CONTRACT_CONTEXT_KEY = "bdd-vitest.contract.v1";
 function levelViolation(message) {
   return { kind: "level", message };
 }
@@ -86,11 +89,7 @@ function validatePolicy(value, label) {
   if (value === "off" || value === "warn" || value === "error") return value;
   throw new Error(`${label} must be one of: off, warn, error`);
 }
-function collectLegacyTests(task) {
-  const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
-  return task.type === "test" ? [task, ...children] : children;
-}
-function bddContractReporter(options = {}) {
+function resolveBddContractOptions(options = {}) {
   const levelPolicy = validatePolicy(
     options.levelPolicy ?? options.policy ?? "error",
     "levelPolicy"
@@ -99,7 +98,22 @@ function bddContractReporter(options = {}) {
     options.documentationPolicy ?? (options.requirePhaseDescriptions === false ? "off" : "error"),
     "documentationPolicy"
   );
-  const requirePhaseDescriptions = documentationPolicy !== "off";
+  return {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions: documentationPolicy !== "off"
+  };
+}
+function collectLegacyTests(task) {
+  const children = task.tasks?.flatMap(collectLegacyTests) ?? [];
+  return task.type === "test" ? [task, ...children] : children;
+}
+function bddContractReporter(options = {}) {
+  const {
+    levelPolicy,
+    documentationPolicy,
+    requirePhaseDescriptions
+  } = resolveBddContractOptions(options);
   const checkedModules = /* @__PURE__ */ new Set();
   const report = (violations) => {
     emitViolations(
@@ -140,9 +154,16 @@ function bddContractReporter(options = {}) {
 }
 
 // src/preset.ts
+function contractSetupFile() {
+  const projectRequire = (0, import_node_module.createRequire)((0, import_node_path.resolve)(process.cwd(), "__bdd-vitest-resolver.cjs"));
+  const presetFile = projectRequire.resolve("bdd-vitest/preset");
+  return (0, import_node_path.resolve)((0, import_node_path.dirname)(presetFile), "contract-setup.js");
+}
 function bddConfig(overrides = {}, contract = {}) {
   const { test: testOverrides = {}, ...rootOverrides } = overrides;
   const configuredReporters = testOverrides.reporters === void 0 ? ["default"] : Array.isArray(testOverrides.reporters) ? testOverrides.reporters : [testOverrides.reporters];
+  const configuredSetupFiles = testOverrides.setupFiles === void 0 ? [] : Array.isArray(testOverrides.setupFiles) ? testOverrides.setupFiles : [testOverrides.setupFiles];
+  const resolvedContract = resolveBddContractOptions(contract);
   return (0, import_config.defineConfig)({
     ...rootOverrides,
     test: {
@@ -154,7 +175,12 @@ function bddConfig(overrides = {}, contract = {}) {
         concurrent: false
       },
       ...testOverrides,
-      reporters: [...configuredReporters, bddContractReporter(contract)]
+      reporters: [...configuredReporters, bddContractReporter(contract)],
+      setupFiles: [contractSetupFile(), ...configuredSetupFiles],
+      provide: {
+        ...testOverrides.provide,
+        [BDD_CONTRACT_CONTEXT_KEY]: resolvedContract
+      }
     }
   });
 }

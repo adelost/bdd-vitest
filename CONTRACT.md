@@ -16,17 +16,27 @@ executable code.
 
 ## Enforcement
 
-`bddConfig()` installs `bddContractReporter()` with `levelPolicy: "error"`
-and `documentationPolicy: "error"`. A test
-registered directly through Vitest has no `meta.bdd` and fails the test run.
-Each policy accepts `off`, `warn`, or `error`, so classification and
-documentation migrations can be ratcheted independently.
+`bddConfig()` installs two independent layers with `levelPolicy: "error"` and
+`documentationPolicy: "error"`:
+
+- a worker-side setup hook that validates the complete collected test tree;
+- `bddContractReporter()` for aggregated collection diagnostics.
+
+A test registered directly through Vitest has no `meta.bdd` and fails the test
+run. Replacing reporters from the CLI, including `--reporter=json` or
+`--reporter=dot`, does not remove the worker-side gate. Each policy accepts
+`off`, `warn`, or `error`, so classification and documentation migrations can
+be ratcheted independently.
 
 ## Compatibility
 
-The legacy outline callback form remains executable in 2.x, but it is marked as
-undocumented metadata and fails when `documentationPolicy` is `error`.
+Version 3 enables both error policies by default. This is intentionally a major
+release: suites upgrading from 2.x must migrate native tests or temporarily set
+one or both policies to `warn`.
+
+The legacy outline callback form remains available for migration, but it is
+marked as undocumented metadata and fails when `documentationPolicy` is `error`.
 Convert each callback to a `[description, callback]` tuple.
 
-The older `policy` and `requirePhaseDescriptions` options remain supported
-through 2.x as aliases for existing consumers.
+The older `policy` and `requirePhaseDescriptions` options remain deprecated
+aliases for existing consumers.

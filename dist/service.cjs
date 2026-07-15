@@ -46,6 +46,14 @@ function killAll() {
   activeProcesses.clear();
 }
 process.on("exit", killAll);
+process.once("SIGINT", () => {
+  killAll();
+  process.exit(130);
+});
+process.once("SIGTERM", () => {
+  killAll();
+  process.exit(143);
+});
 async function startService(config) {
   const {
     name,
@@ -60,10 +68,10 @@ async function startService(config) {
     requires
   } = config;
   if (requires?.minRamMb !== void 0) {
-    const availableRamMb = Math.round((0, import_node_os.totalmem)() / 1024 / 1024);
-    if (availableRamMb < requires.minRamMb) {
+    const hostRamMb = Math.round((0, import_node_os.totalmem)() / 1024 / 1024);
+    if (hostRamMb < requires.minRamMb) {
       throw new Error(
-        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${availableRamMb}MB`
+        `[${name}] Requires ${requires.minRamMb}MB RAM but host has ${hostRamMb}MB`
       );
     }
   }
