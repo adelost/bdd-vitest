@@ -137,9 +137,19 @@ const COMPONENT_TIMEOUT_MS = 5_000;
 const COMPONENT_WORK_BUDGET_MS = 8_000;
 
 // The watchdog answers "did this scenario stop making progress", never "was it
-// quick". Generous on purpose, and reusing integration's existing wall so the
-// number is not invented.
-const HANG_WATCHDOG_MS = 30_000;
+// quick" — the work budget above judges speed. So its floor is the slowest
+// WALL time a legitimate component test takes, measured in the worst run mode:
+// 6425.9ms across 236 real component tests. Doubled for headroom on a loaded
+// host, rounded: 15000.
+//
+// Worth stating plainly, because it explains the flake this change came from:
+// the wall this replaces was 5000ms, BELOW that measured 6425.9ms maximum. The
+// tightest component tests were already living inside the noise before any
+// clock step; the stepping host only made it frequent.
+//
+// No margin is added for clock steps. The watchdog is a monotonic libuv timer,
+// so a stepping wall clock cannot reach it — that is the point of it.
+const COMPONENT_HANG_WATCHDOG_MS = 15_000;
 
 const LEVELS = {
   unit: {
@@ -152,7 +162,7 @@ const LEVELS = {
   },
   component: {
     timeout: COMPONENT_WORK_BUDGET_MS,
-    wallTimeout: HANG_WATCHDOG_MS,
+    wallTimeout: COMPONENT_HANG_WATCHDOG_MS,
     budgetClock: "thread-work",
     warnAt: 2_000,
     name: "component",
