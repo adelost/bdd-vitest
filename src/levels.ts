@@ -15,6 +15,9 @@
  */
 
 import { readFileSync } from "node:fs";
+// Imported from node:timers, not the globals: `vi.useFakeTimers()` replaces
+// globalThis.setTimeout, and a watchdog a test can pause is not a watchdog.
+import { clearTimeout as clearRealTimeout, setTimeout as setRealTimeout } from "node:timers";
 import { describe, it } from "vitest";
 import type { BddTestMetadata } from "./contract.js";
 
@@ -96,15 +99,57 @@ function scenarioMetadata<TContext, TResult>(
 }
 
 function testOptions(level: LevelConfig, metadata: BddTestMetadata): { timeout: number } {
+  // Vitest judges its own timeout on `Date.now` (@vitest/runner reads it at
+  // chunk-hooks.js:1837) while reporting duration on `performance.now`. On a
+  // host whose wall clock steps, that verdict fails tests that did nothing
+  // wrong. Passing Infinity is not a bigger budget — `withTimeout` returns the
+  // function completely unwrapped at Infinity (chunk-hooks.js:1853), so no
+  // timer is armed and no clock is read. Every budget below is ours, measured
+  // on monotonic clocks.
+  //
   // `meta` is supported by Vitest's collector but is not exposed on TestOptions
   // in every supported Vitest type version.
   return {
-    timeout: level.wallTimeout ?? level.timeout,
+    timeout: Number.POSITIVE_INFINITY,
     meta: { bdd: metadata },
   } as { timeout: number };
 }
 
 const COMPONENT_TIMEOUT_MS = 5_000;
+
+// A host whose wall clock steps forward — ours stepped +3584ms about twice a
+// minute — fails any test whose body spans the step, because Vitest judges its
+// own timeout on `Date.now`. The test is not slow; the clock moved. So a level
+// budget measures WORK (thread CPU plus declared async waits), and wall time is
+// demoted to a watchdog for scenarios that never settle at all.
+//
+// COMPONENT_WORK_BUDGET_MS is derived, not chosen:
+//   floor   the worst component work measured across 236 real tests was 5447.7ms
+//           (full-suite parallel; the same tests measure 2106.9ms alone, and the
+//           2.0-2.6x gap is real CPU spent on cache and memory contention). A
+//           budget under the worst realistic run mode fires spuriously, which is
+//           the flake we are removing, wearing a different hat.
+//   ceiling 8000ms of pure CPU in a "component" test is unambiguously an
+//           integration test. The ceiling is what makes the budget falsifiable:
+//           it can be tripped by work, only by work, and reviewers can say what
+//           would trip it.
+//   8000 = 5447.7 x 1.47
+const COMPONENT_WORK_BUDGET_MS = 8_000;
+
+// The watchdog answers "did this scenario stop making progress", never "was it
+// quick" — the work budget above judges speed. So its floor is the slowest
+// WALL time a legitimate component test takes, measured in the worst run mode:
+// 6425.9ms across 236 real component tests. Doubled for headroom on a loaded
+// host, rounded: 15000.
+//
+// Worth stating plainly, because it explains the flake this change came from:
+// the wall this replaces was 5000ms, BELOW that measured 6425.9ms maximum. The
+// tightest component tests were already living inside the noise before any
+// clock step; the stepping host only made it frequent.
+//
+// No margin is added for clock steps. The watchdog is a monotonic libuv timer,
+// so a stepping wall clock cannot reach it — that is the point of it.
+const COMPONENT_HANG_WATCHDOG_MS = 15_000;
 
 const LEVELS = {
   unit: {
@@ -115,7 +160,14 @@ const LEVELS = {
     name: "unit",
     nextLevel: "component",
   },
-  component:   { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2_000, name: "component", nextLevel: "integration" },
+  component: {
+    timeout: COMPONENT_WORK_BUDGET_MS,
+    wallTimeout: COMPONENT_HANG_WATCHDOG_MS,
+    budgetClock: "thread-work",
+    warnAt: 2_000,
+    name: "component",
+    nextLevel: "integration",
+  },
   integration: { timeout: 30_000,  warnAt: 15_000, name: "integration", nextLevel: "e2e" },
   e2e:         { timeout: 120_000, warnAt: 60_000, name: "e2e" },
 } as const;
@@ -240,9 +292,16 @@ function finishScenarioTiming(
     ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs
     : wallMs;
 
-  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+  // Every level enforces its own budget now. Vitest's `it()` timeout is
+  // disarmed (see testOptions), so a level that does not check here is a level
+  // with no upper bound at all — and an unbounded budget is the silent kind of
+  // missing gate, not a lenient one.
+  if (elapsed > level.timeout) {
+    const clock = level.budgetClock === "thread-work"
+      ? `measured work (${level.timeout}ms work budget)`
+      : `wall time (${level.timeout}ms wall budget)`;
     throw new Error(
-      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`,
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of ${clock}`,
     );
   }
 
@@ -297,7 +356,40 @@ function aggregateScenarioFailures(
   return new AggregateError([primary, cleanup], message);
 }
 
+// Nothing interrupts a synchronous body — not this watchdog, and not Vitest's
+// own timeout, which only judges after the body returns. This catches the case
+// that retroactive judging cannot: a scenario that yields and never comes back.
+// The timer is monotonic (libuv), so a stepping wall clock cannot fire it early.
+function armHangWatchdog(level: LevelConfig, name: string) {
+  const budget = level.wallTimeout ?? level.timeout;
+  let timer: ReturnType<typeof setRealTimeout> | undefined;
+  const tripped = new Promise<never>((_, reject) => {
+    timer = setRealTimeout(() => {
+      reject(new Error(
+        `[${level.name}/hang] "${name}" never settled within ${budget}ms of wall time.`
+        + " This is a scenario that stopped making progress, not a slow one:"
+        + " the level's work budget judges speed.",
+      ));
+    }, budget);
+    timer.unref?.();
+  });
+  return { tripped, disarm: () => { if (timer) clearRealTimeout(timer); } };
+}
+
 async function executeScenario<TContext, TResult>(
+  name: string,
+  phases: LevelScenario<TContext, TResult>,
+  level: LevelConfig,
+): Promise<void> {
+  const watchdog = armHangWatchdog(level, name);
+  try {
+    await Promise.race([runScenarioPhases(name, phases, level), watchdog.tripped]);
+  } finally {
+    watchdog.disarm();
+  }
+}
+
+async function runScenarioPhases<TContext, TResult>(
   name: string,
   phases: LevelScenario<TContext, TResult>,
   level: LevelConfig,

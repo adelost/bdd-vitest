@@ -34,6 +34,7 @@ var import_vitest3 = require("vitest");
 
 // src/levels.ts
 var import_node_fs = require("fs");
+var import_node_timers = require("timers");
 var import_vitest = require("vitest");
 function requireDescription(value, label) {
   if (typeof value !== "string" || !value.trim()) {
@@ -84,11 +85,13 @@ function scenarioMetadata(level, name, phases) {
 }
 function testOptions(level, metadata) {
   return {
-    timeout: level.wallTimeout ?? level.timeout,
+    timeout: Number.POSITIVE_INFINITY,
     meta: { bdd: metadata }
   };
 }
 var COMPONENT_TIMEOUT_MS = 5e3;
+var COMPONENT_WORK_BUDGET_MS = 8e3;
+var COMPONENT_HANG_WATCHDOG_MS = 15e3;
 var LEVELS = {
   unit: {
     timeout: 100,
@@ -98,7 +101,14 @@ var LEVELS = {
     name: "unit",
     nextLevel: "component"
   },
-  component: { timeout: COMPONENT_TIMEOUT_MS, warnAt: 2e3, name: "component", nextLevel: "integration" },
+  component: {
+    timeout: COMPONENT_WORK_BUDGET_MS,
+    wallTimeout: COMPONENT_HANG_WATCHDOG_MS,
+    budgetClock: "thread-work",
+    warnAt: 2e3,
+    name: "component",
+    nextLevel: "integration"
+  },
   integration: { timeout: 3e4, warnAt: 15e3, name: "integration", nextLevel: "e2e" },
   e2e: { timeout: 12e4, warnAt: 6e4, name: "e2e" }
 };
@@ -168,9 +178,10 @@ async function runPhase(timing, callback) {
 function finishScenarioTiming(level, name, timing, slow) {
   const wallMs = performance.now() - timing.wallStartedAt;
   const elapsed = level.budgetClock === "thread-work" ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs : wallMs;
-  if (level.budgetClock === "thread-work" && elapsed > level.timeout) {
+  if (elapsed > level.timeout) {
+    const clock = level.budgetClock === "thread-work" ? `measured work (${level.timeout}ms work budget)` : `wall time (${level.timeout}ms wall budget)`;
     throw new Error(
-      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of measured work (${level.timeout}ms work budget)`
+      `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of ${clock}`
     );
   }
   const warnAt = level.warnAt ?? level.timeout * 0.5;
@@ -206,7 +217,30 @@ function aggregateScenarioFailures(level, scenario, primary, cleanup) {
   ].join("\n");
   return new AggregateError([primary, cleanup], message);
 }
+function armHangWatchdog(level, name) {
+  const budget = level.wallTimeout ?? level.timeout;
+  let timer;
+  const tripped = new Promise((_, reject) => {
+    timer = (0, import_node_timers.setTimeout)(() => {
+      reject(new Error(
+        `[${level.name}/hang] "${name}" never settled within ${budget}ms of wall time. This is a scenario that stopped making progress, not a slow one: the level's work budget judges speed.`
+      ));
+    }, budget);
+    timer.unref?.();
+  });
+  return { tripped, disarm: () => {
+    if (timer) (0, import_node_timers.clearTimeout)(timer);
+  } };
+}
 async function executeScenario(name, phases, level) {
+  const watchdog = armHangWatchdog(level, name);
+  try {
+    await Promise.race([runScenarioPhases(name, phases, level), watchdog.tripped]);
+  } finally {
+    watchdog.disarm();
+  }
+}
+async function runScenarioPhases(name, phases, level) {
   validateScenario(phases);
   const timing = startScenarioTiming();
   let phase = "given";
