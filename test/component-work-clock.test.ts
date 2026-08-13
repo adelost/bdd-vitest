@@ -73,9 +73,18 @@ integration("component budgets survive a stepping wall clock and still bite on w
     // step lands inside it, but far under the 8000ms WORK budget.
     const stepVictim = resolve(temp, "step-victim.test.ts");
     await writeFile(stepVictim, `${preamble}
-globalThis.__stepClock = true;
 component("does 1700ms of honest work while the wall clock jumps", {
-  when: ["burning 1700ms of monotonic time", () => { burnWall(1700); return true; }],
+  when: ["burning 1700ms of monotonic time across a clock step", () => {
+    // The flag flips INSIDE the body, on purpose. Setting it at module scope
+    // offsets Date.now by a constant, so the runner's start read and its settle
+    // read shift together and elapsed is unchanged — a constant offset is not a
+    // step, and a probe built that way passes on the BROKEN code too.
+    globalThis.__stepClock = true;
+    burnWall(1700);
+    // Left set through settle: the runner judges its timeout retroactively,
+    // after the body returns, so clearing it here would read an unstepped clock.
+    return true;
+  }],
   then: ["it completes", (value) => { if (value !== true) throw new Error("no"); }],
 });
 `);
