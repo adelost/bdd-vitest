@@ -1,0 +1,7 @@
+# Tasks
+
+Ledger for bdd-vitest (and the shared test policy it carries). stats.v1d.io reads this table.
+
+| # | Prio | Task | Owner | State | Estimate | Spec | Done when | Source |
+|---|---|---|---|---|---|---|---|---|
+| 1 | P2 | Hard, opinionated test runner policy shared by our projects: a runnable contract that refuses before expensive setup when a run lacks a real selectable case mapped to its requirement and route, a budget, a green smaller proof on the same route before a repeated or bigger run (persistent stops, planned red, picture rejects, UNKNOWN), or a stated performance acceptance where speed is a requirement. Existing Vitest, pytest, Node and journey runners keep running the tests; docs and lint describe the same declarations, the runner enforces them. Design decides package (here and bdd-pytest) versus each owner, from Cutkit's tools/dev/journey-case.mjs (rows 327, 328) | lsrc:2 (design), Codex builds | open: start after Cutkit row 328 is on master and Bumbi's preview is delivered; design under feature-design first | | ~/.openclaw/workspace/projects/lead-reviews-2026-10-20/test-retakes.md, "Framtida gemensam hård provkörare" | Cutkit's saved misses (row 303's five stops, core2 without probe, an unregistered journey, a big-input run without a small-file receipt on its route) are refused before setup, a correctly picked small case still passes, then the same contract runs in Huset; cost and effect reported | PRIORITIES 2026-10-20 18:59:35Z |
