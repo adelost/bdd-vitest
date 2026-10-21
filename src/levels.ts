@@ -95,6 +95,8 @@ function scenarioMetadata<TContext, TResult>(
       then: phases.then[0],
     },
     documented: true,
+    budget: { ms: level.timeout, clock: level.budgetClock === "thread-work" ? "work" : "wall" },
+    measuredMs: null,
   };
 }
 
@@ -281,16 +283,19 @@ async function runPhase<T>(timing: ScenarioTiming, callback: () => T | Promise<T
   }
 }
 
+function measuredScenarioMs(level: LevelConfig, timing: ScenarioTiming): number {
+  return level.budgetClock === "thread-work"
+    ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs
+    : performance.now() - timing.wallStartedAt;
+}
+
 function finishScenarioTiming(
   level: LevelConfig,
   name: string,
   timing: ScenarioTiming,
   slow: boolean | undefined,
 ): void {
-  const wallMs = performance.now() - timing.wallStartedAt;
-  const elapsed = level.budgetClock === "thread-work"
-    ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs
-    : wallMs;
+  const elapsed = measuredScenarioMs(level, timing);
 
   // Every level enforces its own budget now. Vitest's `it()` timeout is
   // disarmed (see testOptions), so a level that does not check here is a level
@@ -380,12 +385,15 @@ async function executeScenario<TContext, TResult>(
   name: string,
   phases: LevelScenario<TContext, TResult>,
   level: LevelConfig,
+  metadata: BddTestMetadata,
 ): Promise<void> {
+  const timing = startScenarioTiming();
   const watchdog = armHangWatchdog(level, name);
   try {
-    await Promise.race([runScenarioPhases(name, phases, level), watchdog.tripped]);
+    await Promise.race([runScenarioPhases(name, phases, level, timing), watchdog.tripped]);
   } finally {
     watchdog.disarm();
+    metadata.measuredMs = measuredScenarioMs(level, timing);
   }
 }
 
@@ -393,9 +401,9 @@ async function runScenarioPhases<TContext, TResult>(
   name: string,
   phases: LevelScenario<TContext, TResult>,
   level: LevelConfig,
+  timing: ScenarioTiming,
 ): Promise<void> {
   validateScenario(phases);
-  const timing = startScenarioTiming();
   let phase: RuntimePhase = "given";
   let context: TContext = undefined as TContext;
   let primaryFailure: Error | undefined;
@@ -450,8 +458,8 @@ function createLevelRunner(level: LevelConfig) {
   ): void {
     requireDescription(name, level.name);
     validateScenario(phases);
-    it(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
-      executeScenario(name, phases, level));
+    it(name, testOptions(level, scenarioMetadata(level, name, phases)), ({ task }) =>
+      executeScenario(name, phases, level, Reflect.get(task.meta, "bdd") as BddTestMetadata));
   }
 
   // .skip and .only variants
@@ -470,8 +478,8 @@ function createLevelRunner(level: LevelConfig) {
   ): void {
     requireDescription(name, level.name);
     validateScenario(phases);
-    it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () =>
-      executeScenario(name, phases, level));
+    it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), ({ task }) =>
+      executeScenario(name, phases, level, Reflect.get(task.meta, "bdd") as BddTestMetadata));
   };
 
   Object.defineProperty(run, "workClock", {
@@ -614,10 +622,13 @@ function createLevelOutline(level: LevelConfig) {
           scenario: scenarioName,
           phases: phaseDescriptions,
           documented,
+          budget: { ms: level.timeout, clock: level.budgetClock === "thread-work" ? "work" : "wall" },
+          measuredMs: null,
           outline: { name, row: row.name },
         };
-        it(row.name, testOptions(level, metadata), async () => {
+        it(row.name, testOptions(level, metadata), async ({ task }) => {
           const timing = startScenarioTiming();
+          try {
           let phase: RuntimePhase = "given";
           let context: TContext = undefined as TContext;
           let primaryFailure: Error | undefined;
@@ -668,6 +679,9 @@ function createLevelOutline(level: LevelConfig) {
 
           if (primaryFailure) throw primaryFailure;
           finishScenarioTiming(level, row.name, timing, phases.slow);
+          } finally {
+            (Reflect.get(task.meta, "bdd") as BddTestMetadata).measuredMs = measuredScenarioMs(level, timing);
+          }
         });
       }
     });

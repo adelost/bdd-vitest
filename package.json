@@ -117,7 +117,8 @@
         "default": "./dist/report.cjs"
       }
     },
-    "./schema/bdd.run.v1.json": "./schema/bdd.run.v1.schema.json"
+    "./schema/bdd.run.v1.json": "./schema/bdd.run.v1.schema.json",
+    "./schema/bdd.run.v2.json": "./schema/bdd.run.v2.schema.json"
   },
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",

@@ -30,10 +30,10 @@ function contractSetupFile(): string {
  * rejected by default; set either policy to `warn` during a staged migration.
  */
 export function bddConfig(
-  overrides: ViteUserConfig = {},
+  overrides: ViteUserConfig & { bddReport?: { directory: boolean } } = {},
   contract: BddContractOptions = {},
 ) {
-  const { test: testOverrides = {}, ...rootOverrides } = overrides;
+  const { test: testOverrides = {}, bddReport, ...rootOverrides } = overrides;
   const configuredReporters = testOverrides.reporters === undefined
     ? ["default" as const]
     : Array.isArray(testOverrides.reporters)
@@ -45,8 +45,8 @@ export function bddConfig(
       ? testOverrides.setupFiles
       : [testOverrides.setupFiles];
   const resolvedContract = resolveBddContractOptions(contract);
-  const runReporter = process.env.BDD_REPORT_FILE?.trim()
-    ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE })
+  const runReporter = process.env.BDD_REPORT_FILE?.trim() || bddReport?.directory
+    ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE, directory: bddReport?.directory, root: overrides.root })
     : null;
   const runReport = runReporter ? [runReporter] : [];
   const runReporterPlugin = runReporter

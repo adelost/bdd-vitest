@@ -54,3 +54,33 @@ bdd-pytest accepts `--bdd-report-json PATH`; `BDD_REPORT_FILE` is its fallback.
 
 Report files are written atomically so an interrupted producer cannot leave a
 partially valid document at the requested path.
+
+## Repository directory mode and v2
+
+Opt in once in Vitest config with `bddConfig({ bddReport: { directory: true }, ... })`.
+Pytest supports `bdd_report_directory = true` in its ini configuration, or
+`enable_run_reports(config)` from `bdd_pytest` in an existing `pytest_configure` hook.
+No environment variable is needed for subsequent ordinary runs.
+
+Each run writes `<git-common-dir>/bdd-runs/<startedAtMilliseconds>-<pid>.json`
+atomically. Linked worktrees share this directory, concurrent processes use distinct
+names. Git HEAD, branch and status are read at run start and finish. The recorded
+commit is null if either tree is dirty, HEAD moves, or Git is unavailable; environment
+provenance cannot override it. The branch is the observed starting branch, null when
+detached. Retention removes oldest reports until both 200 files and 500,000,000 bytes
+remain. Report IO failures emit one diagnostic without changing the test/run result.
+
+Directory reports use [`bdd.run.v2`](schema/bdd.run.v2.schema.json). It adds required
+nullable `budget: {ms, clock: "work" | "wall"}` and `measuredMs` on each test.
+Vitest's level owner exports its actual work or wall measurement, including failed
+executions and outlines. Its work clock counts current-thread CPU and declared async
+waits, not scheduling gaps around synchronous phases. Pytest's budgets are wall-clock
+timeouts and its measurement covers the test protocol. Skipped/unmeasured tests stay
+null. Tests without a known level/budget stay null. Do not compare `durationMs` to a
+work budget: the former remains the framework's wall diagnostic.
+
+The original explicit output-file mode remains v1 by default. Select v2 there with
+`BDD_REPORT_SCHEMA=bdd.run.v2`, `schemaVersion: "bdd.run.v2"` in Vitest's reporter
+options, or `--bdd-report-schema=bdd.run.v2` in pytest. v1 schema/output remain valid.
+The cross-harness gate validates both producers against v2 and the shared fixture
+`test/fixtures/run-v2.json`; clocks/budgets may differ by framework by design.

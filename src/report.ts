@@ -1,9 +1,9 @@
 import { createHash } from "node:crypto";
-import { mkdirSync, renameSync, writeFileSync } from "node:fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Reporter } from "vitest/reporters";
 import type { BddTestMetadata } from "./contract.js";
+import { pruneRunReports, runGit, writeRunReport } from "./report-directory.js";
 
 export const BDD_RUN_SCHEMA_VERSION = "bdd.run.v1" as const;
 
@@ -29,10 +29,12 @@ export interface BddRunTest {
   durationMs: number;
   retryCount: number;
   flaky: boolean;
+  budget?: BddTestMetadata["budget"] | null;
+  measuredMs?: number | null;
 }
 
 export interface BddRunReport {
-  schemaVersion: typeof BDD_RUN_SCHEMA_VERSION;
+  schemaVersion: typeof BDD_RUN_SCHEMA_VERSION | "bdd.run.v2";
   run: {
     framework: "vitest";
     frameworkVersion: string | null;
@@ -56,7 +58,10 @@ export interface BddRunReport {
 }
 
 export interface BddRunReporterOptions {
-  outputFile: string;
+  outputFile?: string;
+  /** Opt in once per repository; writes v2 to git-common-dir/bdd-runs. */
+  directory?: boolean;
+  schemaVersion?: "bdd.run.v1" | "bdd.run.v2";
   root?: string;
   project?: string;
   repository?: string;
@@ -168,6 +173,8 @@ const reportTest = (
     durationMs,
     retryCount,
     flaky: retryCount > 0 && status === "passed",
+    budget: metadata?.budget ?? null,
+    measuredMs: metadata?.measuredMs ?? null,
   };
 };
 
@@ -212,21 +219,14 @@ const reportSummary = (tests: BddRunTest[]): BddRunReport["summary"] => ({
   pending: tests.filter(({ status }) => status === "pending").length,
 });
 
-const atomicWrite = (outputFile: string, report: BddRunReport): void => {
-  const target = resolve(outputFile);
-  mkdirSync(dirname(target), { recursive: true });
-  const temporary = `${target}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(report, null, 2)}\n`, "utf8");
-  renameSync(temporary, target);
-};
-
 /**
  * Emit the portable `bdd.run.v1` catalog consumed by Suggestions and other CI
  * tooling. The report deliberately excludes console output and stack traces.
  */
 export function bddRunReporter(options: BddRunReporterOptions): Reporter {
-  if (!options.outputFile?.trim()) throw new Error("bddRunReporter requires outputFile");
+  if (!options.outputFile?.trim() && !options.directory) throw new Error("bddRunReporter requires outputFile or directory");
   const root = resolve(options.root ?? process.cwd());
+  let initialGit = options.directory ? runGit(root) : null;
   let startedAt = Date.now();
   let written = false;
   let frameworkVersion = optionalText(
@@ -242,25 +242,42 @@ export function bddRunReporter(options: BddRunReporterOptions): Reporter {
     const finishedAt = Date.now();
     const sortedTests = [...tests].sort((left, right) =>
       left.file.localeCompare(right.file) || left.fullName.localeCompare(right.fullName));
-    atomicWrite(options.outputFile, {
-      schemaVersion: BDD_RUN_SCHEMA_VERSION,
+    const schemaVersion = options.schemaVersion ?? process.env.BDD_REPORT_SCHEMA
+      ?? (options.directory ? "bdd.run.v2" : BDD_RUN_SCHEMA_VERSION);
+    const finalGit = options.directory ? runGit(root) : null;
+    const report: BddRunReport = {
+      schemaVersion: schemaVersion as BddRunReport["schemaVersion"],
       run: {
         framework: "vitest",
         frameworkVersion,
         project: optionalText(options.project ?? process.env.BDD_REPORT_PROJECT),
         repository: optionalText(options.repository ?? process.env.BDD_REPORT_REPOSITORY),
-        commitSha: optionalText(options.commitSha ?? process.env.BDD_REPORT_COMMIT_SHA
-          ?? process.env.GITHUB_SHA),
-        branch: optionalText(options.branch ?? process.env.BDD_REPORT_BRANCH
-          ?? process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME),
+        commitSha: initialGit
+          ? initialGit.clean && finalGit?.clean && initialGit.sha === finalGit.sha ? initialGit.sha : null
+          : optionalText(options.commitSha ?? process.env.BDD_REPORT_COMMIT_SHA ?? process.env.GITHUB_SHA),
+        branch: initialGit ? initialGit.branch
+          : optionalText(options.branch ?? process.env.BDD_REPORT_BRANCH ?? process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME),
         startedAt: new Date(startedAt).toISOString(),
         finishedAt: new Date(finishedAt).toISOString(),
         durationMs: finishedAt - startedAt,
         status,
       },
       summary: reportSummary(sortedTests),
-      tests: sortedTests,
-    });
+      tests: schemaVersion === "bdd.run.v2" ? sortedTests : sortedTests.map(({ budget: _budget, measuredMs: _measured, ...test }) => test),
+    };
+    try {
+      if (schemaVersion !== "bdd.run.v1" && schemaVersion !== "bdd.run.v2") throw new Error("unsupported report schema");
+      if (options.outputFile) writeRunReport(resolve(options.outputFile), report);
+      if (options.directory) {
+        const directory = initialGit?.directory;
+        if (!directory) throw new Error("git common directory unavailable");
+        // Catalog files are v2 even when an explicit legacy output file was requested.
+        writeRunReport(join(directory, `${startedAt}-${process.pid}.json`), { ...report, schemaVersion: "bdd.run.v2", tests: sortedTests });
+        pruneRunReports(directory);
+      }
+    } catch (error) {
+      console.warn(`[bdd-vitest] report write failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
 
   const reporter = {
@@ -269,6 +286,8 @@ export function bddRunReporter(options: BddRunReporterOptions): Reporter {
     },
     onTestRunStart() {
       startedAt = Date.now();
+      initialGit = options.directory ? runGit(root) : null;
+      written = false;
     },
     onTestRunEnd(modules: readonly unknown[], errors: readonly unknown[], reason: string) {
       const tests = collectModernTests(modules, root);

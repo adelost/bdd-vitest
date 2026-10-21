@@ -39,6 +39,7 @@ const semanticRun = (report) => ({
     status: test.status,
     retryCount: test.retryCount,
     flaky: test.flaky,
+    measuredKnown: typeof test.measuredMs === "number",
   })),
 });
 
@@ -51,6 +52,7 @@ try {
     BDD_REPORT_REPOSITORY: "adelost/checkout",
     BDD_REPORT_COMMIT_SHA: "0123456789abcdef",
     BDD_REPORT_BRANCH: "main",
+    BDD_REPORT_SCHEMA: "bdd.run.v2",
   };
 
   execute(
@@ -69,14 +71,18 @@ try {
   const reports = [vitestReport, pytestReport].map((path) =>
     JSON.parse(readFileSync(path, "utf8")));
   const schema = JSON.parse(
-    readFileSync(join(root, "schema", "bdd.run.v1.schema.json"), "utf8"),
+    readFileSync(join(root, "schema", "bdd.run.v2.schema.json"), "utf8"),
   );
   const ajv = new Ajv2020({ allErrors: true, strict: true });
   addFormats(ajv);
   const validate = ajv.compile(schema);
   for (const report of reports) {
     assert.ok(validate(report), ajv.errorsText(validate.errors, { separator: "\n" }));
+    assert.deepEqual(report.tests[0].budget, { ms: 100, clock: report.run.framework === "vitest" ? "work" : "wall" });
+    assert.ok(report.tests[0].measuredMs >= 0);
   }
+  const sharedFixture = JSON.parse(readFileSync(join(root, "test/fixtures/run-v2.json"), "utf8"));
+  assert.ok(validate(sharedFixture), ajv.errorsText(validate.errors));
   assert.deepEqual(
     semanticRun(reports[0]),
     semanticRun(reports[1]),

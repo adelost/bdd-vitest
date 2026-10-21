@@ -33,6 +33,8 @@ export interface BddTestMetadata {
     then: string;
   };
   documented: boolean;
+  budget?: { ms: number; clock: "work" | "wall" };
+  measuredMs?: number | null;
   outline?: {
     name: string;
     row: string;

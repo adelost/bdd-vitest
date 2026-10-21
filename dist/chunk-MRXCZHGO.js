@@ -46,7 +46,9 @@ function scenarioMetadata(level, name, phases) {
       when: phases.when?.[0],
       then: phases.then[0]
     },
-    documented: true
+    documented: true,
+    budget: { ms: level.timeout, clock: level.budgetClock === "thread-work" ? "work" : "wall" },
+    measuredMs: null
   };
 }
 function testOptions(level, metadata) {
@@ -141,9 +143,11 @@ async function runPhase(timing, callback) {
     timing.explicitAsyncWaitMs += Math.max(0, wallMs - cpuMs);
   }
 }
+function measuredScenarioMs(level, timing) {
+  return level.budgetClock === "thread-work" ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs : performance.now() - timing.wallStartedAt;
+}
 function finishScenarioTiming(level, name, timing, slow) {
-  const wallMs = performance.now() - timing.wallStartedAt;
-  const elapsed = level.budgetClock === "thread-work" ? threadCpuMs(timing.threadCpuStartedAt) + timing.explicitAsyncWaitMs : wallMs;
+  const elapsed = measuredScenarioMs(level, timing);
   if (elapsed > level.timeout) {
     const clock = level.budgetClock === "thread-work" ? `measured work (${level.timeout}ms work budget)` : `wall time (${level.timeout}ms wall budget)`;
     throw new Error(
@@ -198,17 +202,18 @@ function armHangWatchdog(level, name) {
     if (timer) clearRealTimeout(timer);
   } };
 }
-async function executeScenario(name, phases, level) {
+async function executeScenario(name, phases, level, metadata) {
+  const timing = startScenarioTiming();
   const watchdog = armHangWatchdog(level, name);
   try {
-    await Promise.race([runScenarioPhases(name, phases, level), watchdog.tripped]);
+    await Promise.race([runScenarioPhases(name, phases, level, timing), watchdog.tripped]);
   } finally {
     watchdog.disarm();
+    metadata.measuredMs = measuredScenarioMs(level, timing);
   }
 }
-async function runScenarioPhases(name, phases, level) {
+async function runScenarioPhases(name, phases, level, timing) {
   validateScenario(phases);
-  const timing = startScenarioTiming();
   let phase = "given";
   let context = void 0;
   let primaryFailure;
@@ -254,7 +259,7 @@ function createLevelRunner(level) {
   function run(name, phases) {
     requireDescription(name, level.name);
     validateScenario(phases);
-    it(name, testOptions(level, scenarioMetadata(level, name, phases)), () => executeScenario(name, phases, level));
+    it(name, testOptions(level, scenarioMetadata(level, name, phases)), ({ task }) => executeScenario(name, phases, level, Reflect.get(task.meta, "bdd")));
   }
   run.skip = function(name, phases) {
     requireDescription(name, level.name);
@@ -265,7 +270,7 @@ function createLevelRunner(level) {
   run.only = function(name, phases) {
     requireDescription(name, level.name);
     validateScenario(phases);
-    it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), () => executeScenario(name, phases, level));
+    it.only(name, testOptions(level, scenarioMetadata(level, name, phases)), ({ task }) => executeScenario(name, phases, level, Reflect.get(task.meta, "bdd")));
   };
   Object.defineProperty(run, "workClock", {
     value: level.budgetClock === "thread-work" ? UNIT_CPU_CLOCK.kind : "wall",
@@ -347,52 +352,58 @@ function createLevelOutline(level) {
           scenario: scenarioName,
           phases: phaseDescriptions,
           documented,
+          budget: { ms: level.timeout, clock: level.budgetClock === "thread-work" ? "work" : "wall" },
+          measuredMs: null,
           outline: { name, row: row.name }
         };
-        it(row.name, testOptions(level, metadata), async () => {
+        it(row.name, testOptions(level, metadata), async ({ task }) => {
           const timing = startScenarioTiming();
-          let phase = "given";
-          let context = void 0;
-          let primaryFailure;
           try {
-            if (given) context = await runPhase(timing, () => given(row));
-            phase = "when";
-            const result = when ? await runPhase(timing, () => when(context, row)) : context;
-            phase = "then";
-            await runPhase(timing, () => then(result, context, row));
-          } catch (error) {
-            const fallbackDescriptions = {
-              given: "setup",
-              when: "action",
-              then: "expectations"
-            };
-            const description = documented ? phaseDescriptions[phase] ?? fallbackDescriptions[phase] : fallbackDescriptions[phase];
-            primaryFailure = tagScenarioError(error, level, phase, scenarioName, description);
-          }
-          if (phases.cleanup) {
+            let phase = "given";
+            let context = void 0;
+            let primaryFailure;
             try {
-              await runPhase(timing, () => phases.cleanup(context));
+              if (given) context = await runPhase(timing, () => given(row));
+              phase = "when";
+              const result = when ? await runPhase(timing, () => when(context, row)) : context;
+              phase = "then";
+              await runPhase(timing, () => then(result, context, row));
             } catch (error) {
-              const cleanupFailure = tagScenarioError(
-                error,
-                level,
-                "cleanup",
-                scenarioName,
-                "cleanup completes"
-              );
-              if (primaryFailure) {
-                throw aggregateScenarioFailures(
-                  level,
-                  scenarioName,
-                  primaryFailure,
-                  cleanupFailure
-                );
-              }
-              throw cleanupFailure;
+              const fallbackDescriptions = {
+                given: "setup",
+                when: "action",
+                then: "expectations"
+              };
+              const description = documented ? phaseDescriptions[phase] ?? fallbackDescriptions[phase] : fallbackDescriptions[phase];
+              primaryFailure = tagScenarioError(error, level, phase, scenarioName, description);
             }
+            if (phases.cleanup) {
+              try {
+                await runPhase(timing, () => phases.cleanup(context));
+              } catch (error) {
+                const cleanupFailure = tagScenarioError(
+                  error,
+                  level,
+                  "cleanup",
+                  scenarioName,
+                  "cleanup completes"
+                );
+                if (primaryFailure) {
+                  throw aggregateScenarioFailures(
+                    level,
+                    scenarioName,
+                    primaryFailure,
+                    cleanupFailure
+                  );
+                }
+                throw cleanupFailure;
+              }
+            }
+            if (primaryFailure) throw primaryFailure;
+            finishScenarioTiming(level, row.name, timing, phases.slow);
+          } finally {
+            Reflect.get(task.meta, "bdd").measuredMs = measuredScenarioMs(level, timing);
           }
-          if (primaryFailure) throw primaryFailure;
-          finishScenarioTiming(level, row.name, timing, phases.slow);
         });
       }
     });

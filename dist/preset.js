@@ -5,7 +5,7 @@ import {
 } from "./chunk-2NHCFVU7.js";
 import {
   bddRunReporter
-} from "./chunk-LQTMIB32.js";
+} from "./chunk-L7LBA76X.js";
 
 // src/preset.ts
 import { createRequire } from "module";
@@ -17,11 +17,11 @@ function contractSetupFile() {
   return resolve(dirname(presetFile), "contract-setup.js");
 }
 function bddConfig(overrides = {}, contract = {}) {
-  const { test: testOverrides = {}, ...rootOverrides } = overrides;
+  const { test: testOverrides = {}, bddReport, ...rootOverrides } = overrides;
   const configuredReporters = testOverrides.reporters === void 0 ? ["default"] : Array.isArray(testOverrides.reporters) ? testOverrides.reporters : [testOverrides.reporters];
   const configuredSetupFiles = testOverrides.setupFiles === void 0 ? [] : Array.isArray(testOverrides.setupFiles) ? testOverrides.setupFiles : [testOverrides.setupFiles];
   const resolvedContract = resolveBddContractOptions(contract);
-  const runReporter = process.env.BDD_REPORT_FILE?.trim() ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE }) : null;
+  const runReporter = process.env.BDD_REPORT_FILE?.trim() || bddReport?.directory ? bddRunReporter({ outputFile: process.env.BDD_REPORT_FILE, directory: bddReport?.directory, root: overrides.root }) : null;
   const runReport = runReporter ? [runReporter] : [];
   const runReporterPlugin = runReporter ? {
     name: "bdd-vitest-run-reporter",

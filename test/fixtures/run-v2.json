@@ -1,0 +1,19 @@
+{
+  "schemaVersion": "bdd.run.v2",
+  "run": {
+    "framework": "vitest", "frameworkVersion": "3.2.1", "project": "fixture", "repository": "fixture/repository",
+    "commitSha": null, "branch": "main", "startedAt": "2026-10-21T03:00:00.000Z", "finishedAt": "2026-10-21T03:00:10.000Z", "durationMs": 10000, "status": "passed"
+  },
+  "summary": { "total": 2, "passed": 1, "failed": 0, "skipped": 1, "pending": 0 },
+  "tests": [
+    {
+      "id": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "name": "row 203: uses [stairs]+ (floor)?", "fullName": "Stairs row 203: uses [stairs]+ (floor)?", "file": "packages/client/test/stair-floor.test.ts", "line": 20,
+      "level": "component", "documentation": "scenario", "scenarios": [{ "name": "stairs", "phases": { "then": "floor remains solid" }, "documented": true }],
+      "status": "passed", "durationMs": 9700, "retryCount": 0, "flaky": false, "budget": { "ms": 8000, "clock": "work" }, "measuredMs": 7200
+    },
+    {
+      "id": "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb", "name": "not executed", "fullName": "not executed", "file": "packages/client/test/stair-floor.test.ts", "line": 50,
+      "level": null, "documentation": "missing", "scenarios": [], "status": "skipped", "durationMs": 0, "retryCount": 0, "flaky": false, "budget": null, "measuredMs": null
+    }
+  ]
+}

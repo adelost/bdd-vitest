@@ -16,6 +16,10 @@ import 'vitest/reporters';
  * Vitest config with BDD contracts enabled. Native `it`/`test` cases are
  * rejected by default; set either policy to `warn` during a staged migration.
  */
-declare function bddConfig(overrides?: ViteUserConfig, contract?: BddContractOptions): ViteUserConfig;
+declare function bddConfig(overrides?: ViteUserConfig & {
+    bddReport?: {
+        directory: boolean;
+    };
+}, contract?: BddContractOptions): ViteUserConfig;
 
 export { bddConfig };

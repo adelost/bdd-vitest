@@ -1,8 +1,59 @@
 // src/report.ts
 import { createHash } from "crypto";
-import { mkdirSync, renameSync, writeFileSync } from "fs";
-import { basename, dirname, isAbsolute, relative, resolve, sep } from "path";
+import { basename, isAbsolute, join as join2, relative, resolve as resolve2, sep } from "path";
 import { fileURLToPath } from "url";
+
+// src/report-directory.ts
+import { execFileSync } from "child_process";
+import { mkdirSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from "fs";
+import { dirname, join, resolve } from "path";
+function runGit(root) {
+  const read = (...args) => execFileSync("git", args, {
+    cwd: root,
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "ignore"],
+    timeout: 2e3
+  }).trim();
+  try {
+    return {
+      sha: read("rev-parse", "HEAD"),
+      branch: read("branch", "--show-current") || null,
+      clean: read("status", "--porcelain").length === 0,
+      directory: join(resolve(root, read("rev-parse", "--git-common-dir")), "bdd-runs")
+    };
+  } catch {
+    return { sha: null, branch: null, clean: false, directory: null };
+  }
+}
+function writeRunReport(target, report) {
+  mkdirSync(dirname(target), { recursive: true });
+  const temporary = `${target}.tmp-${process.pid}`;
+  try {
+    writeFileSync(temporary, `${JSON.stringify(report, null, 2)}
+`, "utf8");
+    renameSync(temporary, target);
+  } finally {
+    rmSync(temporary, { force: true });
+  }
+}
+function pruneRunReports(directory) {
+  const files = [];
+  for (const name of readdirSync(directory).filter((name2) => /^\d+-\d+\.json$/u.test(name2)).sort()) {
+    try {
+      const path = join(directory, name);
+      files.push({ path, size: statSync(path).size });
+    } catch (error) {
+      if (error.code !== "ENOENT") throw error;
+    }
+  }
+  let bytes = files.reduce((sum, file) => sum + file.size, 0);
+  for (let index = 0; index < files.length && (files.length - index > 200 || bytes > 5e8); index++) {
+    rmSync(files[index].path, { force: true });
+    bytes -= files[index].size;
+  }
+}
+
+// src/report.ts
 var BDD_RUN_SCHEMA_VERSION = "bdd.run.v1";
 var optionalText = (value) => {
   const normalized = value?.trim();
@@ -68,7 +119,9 @@ var reportTest = (task, file, fullName) => {
     status,
     durationMs,
     retryCount,
-    flaky: retryCount > 0 && status === "passed"
+    flaky: retryCount > 0 && status === "passed",
+    budget: metadata?.budget ?? null,
+    measuredMs: metadata?.measuredMs ?? null
   };
 };
 var collectModernTests = (modules, root) => modules.flatMap((entry) => {
@@ -102,17 +155,10 @@ var reportSummary = (tests) => ({
   skipped: tests.filter(({ status }) => status === "skipped").length,
   pending: tests.filter(({ status }) => status === "pending").length
 });
-var atomicWrite = (outputFile, report) => {
-  const target = resolve(outputFile);
-  mkdirSync(dirname(target), { recursive: true });
-  const temporary = `${target}.tmp-${process.pid}`;
-  writeFileSync(temporary, `${JSON.stringify(report, null, 2)}
-`, "utf8");
-  renameSync(temporary, target);
-};
 function bddRunReporter(options) {
-  if (!options.outputFile?.trim()) throw new Error("bddRunReporter requires outputFile");
-  const root = resolve(options.root ?? process.cwd());
+  if (!options.outputFile?.trim() && !options.directory) throw new Error("bddRunReporter requires outputFile or directory");
+  const root = resolve2(options.root ?? process.cwd());
+  let initialGit = options.directory ? runGit(root) : null;
   let startedAt = Date.now();
   let written = false;
   let frameworkVersion = optionalText(
@@ -123,23 +169,37 @@ function bddRunReporter(options) {
     written = true;
     const finishedAt = Date.now();
     const sortedTests = [...tests].sort((left, right) => left.file.localeCompare(right.file) || left.fullName.localeCompare(right.fullName));
-    atomicWrite(options.outputFile, {
-      schemaVersion: BDD_RUN_SCHEMA_VERSION,
+    const schemaVersion = options.schemaVersion ?? process.env.BDD_REPORT_SCHEMA ?? (options.directory ? "bdd.run.v2" : BDD_RUN_SCHEMA_VERSION);
+    const finalGit = options.directory ? runGit(root) : null;
+    const report = {
+      schemaVersion,
       run: {
         framework: "vitest",
         frameworkVersion,
         project: optionalText(options.project ?? process.env.BDD_REPORT_PROJECT),
         repository: optionalText(options.repository ?? process.env.BDD_REPORT_REPOSITORY),
-        commitSha: optionalText(options.commitSha ?? process.env.BDD_REPORT_COMMIT_SHA ?? process.env.GITHUB_SHA),
-        branch: optionalText(options.branch ?? process.env.BDD_REPORT_BRANCH ?? process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME),
+        commitSha: initialGit ? initialGit.clean && finalGit?.clean && initialGit.sha === finalGit.sha ? initialGit.sha : null : optionalText(options.commitSha ?? process.env.BDD_REPORT_COMMIT_SHA ?? process.env.GITHUB_SHA),
+        branch: initialGit ? initialGit.branch : optionalText(options.branch ?? process.env.BDD_REPORT_BRANCH ?? process.env.GITHUB_HEAD_REF ?? process.env.GITHUB_REF_NAME),
         startedAt: new Date(startedAt).toISOString(),
         finishedAt: new Date(finishedAt).toISOString(),
         durationMs: finishedAt - startedAt,
         status
       },
       summary: reportSummary(sortedTests),
-      tests: sortedTests
-    });
+      tests: schemaVersion === "bdd.run.v2" ? sortedTests : sortedTests.map(({ budget: _budget, measuredMs: _measured, ...test }) => test)
+    };
+    try {
+      if (schemaVersion !== "bdd.run.v1" && schemaVersion !== "bdd.run.v2") throw new Error("unsupported report schema");
+      if (options.outputFile) writeRunReport(resolve2(options.outputFile), report);
+      if (options.directory) {
+        const directory = initialGit?.directory;
+        if (!directory) throw new Error("git common directory unavailable");
+        writeRunReport(join2(directory, `${startedAt}-${process.pid}.json`), { ...report, schemaVersion: "bdd.run.v2", tests: sortedTests });
+        pruneRunReports(directory);
+      }
+    } catch (error) {
+      console.warn(`[bdd-vitest] report write failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
   };
   const reporter = {
     onInit(context) {
@@ -147,6 +207,8 @@ function bddRunReporter(options) {
     },
     onTestRunStart() {
       startedAt = Date.now();
+      initialGit = options.directory ? runGit(root) : null;
+      written = false;
     },
     onTestRunEnd(modules, errors, reason) {
       const tests = collectModernTests(modules, root);

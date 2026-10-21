@@ -22,9 +22,11 @@ interface BddRunTest {
     durationMs: number;
     retryCount: number;
     flaky: boolean;
+    budget?: BddTestMetadata["budget"] | null;
+    measuredMs?: number | null;
 }
 interface BddRunReport {
-    schemaVersion: typeof BDD_RUN_SCHEMA_VERSION;
+    schemaVersion: typeof BDD_RUN_SCHEMA_VERSION | "bdd.run.v2";
     run: {
         framework: "vitest";
         frameworkVersion: string | null;
@@ -47,7 +49,10 @@ interface BddRunReport {
     tests: BddRunTest[];
 }
 interface BddRunReporterOptions {
-    outputFile: string;
+    outputFile?: string;
+    /** Opt in once per repository; writes v2 to git-common-dir/bdd-runs. */
+    directory?: boolean;
+    schemaVersion?: "bdd.run.v1" | "bdd.run.v2";
     root?: string;
     project?: string;
     repository?: string;
