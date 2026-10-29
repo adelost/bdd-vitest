@@ -75,7 +75,7 @@ const runContendedVitest = (file: string, cpu: string): Promise<VitestResult> =>
     child.on("close", (status) => resolveResult({ status, stdout, stderr }));
   });
 
-integration("unit work budgets ignore scheduler preemption without masking slow work", {
+integration("unit work warns from 50ms, ignores scheduler preemption and never fails a slow unit", {
   given: ["four contended units, two real poisons, and a degraded-clock audit", async () => {
     const temp = await mkdtemp(resolve(fixtureRoot, "scheduler-budget-"));
     const readyFiles = Array.from({ length: 4 }, (_, index) =>
@@ -150,7 +150,7 @@ levels.unit("makes a degraded clock explicit", {
       degradedAudit: runVitest(fixtures.degradedAudit),
     };
   }],
-  then: ["contention passes while both kinds of real work fail", (result) => {
+  then: ["contention passes, and both kinds of real work pass with a warning, never red (RULES.md rule 4, 3a62368f)", (result) => {
     if ("unsupported" in result) return;
     expect(result.contention).toHaveLength(4);
     for (const worker of result.contention) {
@@ -160,8 +160,10 @@ levels.unit("makes a degraded clock explicit", {
     }
     for (const poison of [result.cpuPoison, result.asyncPoison]) {
       const output = childOutput(poison);
-      expect(poison.status, output).toBe(1);
-      expect(output).toContain("100ms work budget");
+      expect(poison.status, output).toBe(0);
+      expect(output).toContain("1 passed");
+      expect(output).toMatch(/\[unit\] "[^"]+" used \d+ms of measured work \(warn: 50ms\)/);
+      expect(output).not.toContain("/budget");
     }
     const auditOutput = childOutput(result.degradedAudit);
     expect(result.degradedAudit.status, auditOutput).toBe(0);

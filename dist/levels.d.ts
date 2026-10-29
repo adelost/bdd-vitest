@@ -20,8 +20,10 @@ import 'vitest/reporters';
 /** Phase: [description, function] tuple — description is enforced */
 type Phase<TFn> = readonly [desc: string, fn: TFn];
 interface LevelConfig {
-    /** Max time or measured work per scenario (ms) */
+    /** Max time or measured work per scenario (ms); for an `advisory` level the line a scenario is warned at. */
     timeout: number;
+    /** The level only warns when a scenario passes `timeout`; it never fails one (the hang watchdog still does). */
+    advisory?: boolean;
     /** Outer wall-clock watchdog. Defaults to timeout. */
     wallTimeout?: number;
     /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */

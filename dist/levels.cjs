@@ -89,10 +89,10 @@ var COMPONENT_WORK_BUDGET_MS = 8e3;
 var COMPONENT_HANG_WATCHDOG_MS = 15e3;
 var LEVELS = {
   unit: {
-    timeout: 100,
+    timeout: 50,
+    advisory: true,
     wallTimeout: COMPONENT_TIMEOUT_MS,
     budgetClock: "thread-work",
-    warnAt: 50,
     name: "unit",
     nextLevel: "component"
   },
@@ -175,18 +175,18 @@ function measuredScenarioMs(level, timing) {
 }
 function finishScenarioTiming(level, name, timing, slow) {
   const elapsed = measuredScenarioMs(level, timing);
-  if (elapsed > level.timeout) {
+  if (!level.advisory && elapsed > level.timeout) {
     const clock = level.budgetClock === "thread-work" ? `measured work (${level.timeout}ms work budget)` : `wall time (${level.timeout}ms wall budget)`;
     throw new Error(
       `[${level.name}/budget] "${name}" used ${Math.round(elapsed)}ms of ${clock}`
     );
   }
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  const warnAt = level.advisory ? level.timeout : level.warnAt ?? level.timeout * 0.5;
   if (!slow && elapsed > warnAt) {
     const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
     const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
     console.warn(
-      `\u26A0\uFE0F  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`
+      `\u26A0\uFE0F  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms${level.advisory ? "" : `, limit: ${level.timeout}ms`}).${next}`
     );
   }
 }

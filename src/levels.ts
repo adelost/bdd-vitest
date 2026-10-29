@@ -66,8 +66,10 @@ function validateScenario<TContext, TResult>(
 // --- Level config ---
 
 export interface LevelConfig {
-  /** Max time or measured work per scenario (ms) */
+  /** Max time or measured work per scenario (ms); for an `advisory` level the line a scenario is warned at. */
   timeout: number;
+  /** The level only warns when a scenario passes `timeout`; it never fails one (the hang watchdog still does). */
+  advisory?: boolean;
   /** Outer wall-clock watchdog. Defaults to timeout. */
   wallTimeout?: number;
   /** `thread-work` counts thread CPU plus waits from Promise-returning phases. Defaults to wall time. */
@@ -155,10 +157,10 @@ const COMPONENT_HANG_WATCHDOG_MS = 15_000;
 
 const LEVELS = {
   unit: {
-    timeout: 100,
+    timeout: 50,
+    advisory: true,
     wallTimeout: COMPONENT_TIMEOUT_MS,
     budgetClock: "thread-work",
-    warnAt: 50,
     name: "unit",
     nextLevel: "component",
   },
@@ -297,11 +299,11 @@ function finishScenarioTiming(
 ): void {
   const elapsed = measuredScenarioMs(level, timing);
 
-  // Every level enforces its own budget now. Vitest's `it()` timeout is
+  // Every level but an advisory one (unit, RULES.md rule 4, 3a62368f: it warns, never fails) enforces its own budget. Vitest's `it()` timeout is
   // disarmed (see testOptions), so a level that does not check here is a level
   // with no upper bound at all — and an unbounded budget is the silent kind of
   // missing gate, not a lenient one.
-  if (elapsed > level.timeout) {
+  if (!level.advisory && elapsed > level.timeout) {
     const clock = level.budgetClock === "thread-work"
       ? `measured work (${level.timeout}ms work budget)`
       : `wall time (${level.timeout}ms wall budget)`;
@@ -310,12 +312,12 @@ function finishScenarioTiming(
     );
   }
 
-  const warnAt = level.warnAt ?? level.timeout * 0.5;
+  const warnAt = level.advisory ? level.timeout : level.warnAt ?? level.timeout * 0.5;
   if (!slow && elapsed > warnAt) {
     const next = level.nextLevel ? ` Is this a ${level.nextLevel} test?` : "";
     const clock = level.budgetClock === "thread-work" ? " measured work" : " wall time";
     console.warn(
-      `⚠️  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms, limit: ${level.timeout}ms).${next}`,
+      `⚠️  [${level.name}] "${name}" used ${Math.round(elapsed)}ms of${clock} (warn: ${warnAt}ms${level.advisory ? "" : `, limit: ${level.timeout}ms`}).${next}`,
     );
   }
 }

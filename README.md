@@ -81,7 +81,7 @@ mixed suites can upgrade without a flag day by starting with both policies on
 
 ## Levels
 
-Every test must declare its level. Wrong level => timeout fails the test. Slow for its level => warning nudges you.
+Every test must declare its level. Wrong level => the level's timeout fails the test, except `unit`, which only warns. Slow for its level => warning nudges you.
 
 ```ts
 import { unit, component, integration, e2e } from "bdd-vitest";
@@ -89,13 +89,13 @@ import { unit, component, integration, e2e } from "bdd-vitest";
 
 | Level | Warning | Timeout | Use for |
 |-------|---------|---------|---------| 
-| `unit` | 50ms | 100ms | Pure logic, no I/O |
+| `unit` | 50ms | none (warns, never fails) | Pure logic, no I/O |
 | `component` | 2s | 5s | Service in isolation, mocked deps |
 | `integration` | 15s | 30s | Multiple services, real deps |
 | `e2e` | 60s | 120s | Full system, browser, network |
 
 ```
-⚠️  [unit] "parse config" took 80ms (warn: 50ms, limit: 100ms). Is this a component test?
+⚠️  [unit] "parse config" used 80ms of measured work (warn: 50ms). Is this a component test?
 ```
 
 Know it's intentionally slow? `slow: true` suppresses the warning (timeout still enforced).

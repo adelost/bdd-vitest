@@ -119,7 +119,7 @@ feature("repository report directory", () => {
       expect(valid(report), ajv.errorsText(valid.errors)).toBe(true);
       expect(valid(JSON.parse(readFileSync("test/fixtures/run-v2.json", "utf8")))).toBe(true);
       const [ran, skipped] = report.tests;
-      expect(ran.budget).toEqual({ ms: 100, clock: "work" });
+      expect(ran.budget).toEqual({ ms: 50, clock: "work" });
       expect(ran.measuredMs).toBeTypeOf("number");
       expect(ran.measuredMs).toBeGreaterThanOrEqual(0);
       expect(skipped.budget).toEqual({ ms: 8000, clock: "work" });

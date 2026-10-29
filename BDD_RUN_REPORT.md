@@ -77,7 +77,8 @@ executions and outlines. Its work clock counts current-thread CPU and declared a
 waits, not scheduling gaps around synchronous phases. Pytest's budgets are wall-clock
 timeouts and its measurement covers the test protocol. Skipped/unmeasured tests stay
 null. Tests without a known level/budget stay null. Do not compare `durationMs` to a
-work budget: the former remains the framework's wall diagnostic.
+work budget: the former remains the framework's wall diagnostic. The `unit` level is advisory (3.1.0):
+its `budget.ms` (50) is the line it warns at, and a unit that measures more still passes.
 
 The original explicit output-file mode remains v1 by default. Select v2 there with
 `BDD_REPORT_SCHEMA=bdd.run.v2`, `schemaVersion: "bdd.run.v2"` in Vitest's reporter
